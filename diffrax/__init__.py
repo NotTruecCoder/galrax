@@ -1,5 +1,6 @@
 import importlib.metadata
 
+from . import group_algebra as group_algebra
 from ._adjoint import (
     AbstractAdjoint as AbstractAdjoint,
     BacksolveAdjoint as BacksolveAdjoint,
