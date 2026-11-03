@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .group import Group
+from .terms import AbstractExponentialTerm, FourierLinearTerm
 
 
 def subgroup_closure(group: Group, generators) -> np.ndarray:
@@ -58,7 +59,32 @@ def _complex_dtype():
     return jnp.asarray(1j).dtype
 
 
-class AbstractFourierTransform:
+class AbstractSpectralTransform:
+    """A linear change of coordinates for functions on a finite group in which the
+    linear part of a `GroupODE` can be exponentiated exactly.
+
+    Coordinates are real: a tuple of arrays of shape `(2, ...)` holding the real and
+    imaginary parts of complex blocks. Solvers work in these coordinates, so they
+    should be an isometry (up to a constant) of the values on the group, for error
+    control to mean the same thing in both spaces.
+    """
+
+    group: Group
+
+    def to_coordinates(self, f) -> tuple:
+        """The real coordinates of a function `f` of shape `(..., n)`."""
+        raise NotImplementedError
+
+    def from_coordinates(self, y):
+        """The function on the group with real coordinates `y`."""
+        raise NotImplementedError
+
+    def linear_term(self, problem) -> AbstractExponentialTerm:
+        """The linear part of a `GroupODE` in these coordinates."""
+        raise NotImplementedError
+
+
+class AbstractFourierTransform(AbstractSpectralTransform):
     """Fourier transform on a finite group `G` with respect to a complete set of
     unitary irreducible representations `rho_1, ..., rho_h`:
 
@@ -96,8 +122,8 @@ class AbstractFourierTransform:
         return self.inverse([a @ b for a, b in zip(fhat, hhat)])
 
     def to_coordinates(self, f) -> tuple:
-        """Real coordinates of `f`: a tuple with, for each representation, an array of
-        shape `(2, ..., d, d)` holding the real and imaginary parts of
+        """Real coordinates of `f`: for each representation, an array of shape
+        `(2, ..., d, d)` holding the real and imaginary parts of
         `sqrt(d / n) fhat(rho)`.
         """
         n = self.group.n
@@ -107,7 +133,6 @@ class AbstractFourierTransform:
         )
 
     def from_coordinates(self, y):
-        """The function on the group with real coordinates `y`."""
         n = self.group.n
         return self.inverse(
             [
@@ -115,6 +140,9 @@ class AbstractFourierTransform:
                 for b, d in zip(y, self.degrees)
             ]
         )
+
+    def linear_term(self, problem) -> FourierLinearTerm:
+        return FourierLinearTerm.from_problem(problem, self)
 
     def _check_function(self, f):
         f = jnp.asarray(f)

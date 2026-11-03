@@ -1,6 +1,10 @@
 import importlib.metadata
 
-from . import group_algebra as group_algebra
+from . import (
+    group_algebra as group_algebra,
+    padic_flow as padic_flow,
+    ultrametric as ultrametric,
+)
 from ._adjoint import (
     AbstractAdjoint as AbstractAdjoint,
     BacksolveAdjoint as BacksolveAdjoint,

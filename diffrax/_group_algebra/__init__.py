@@ -1,5 +1,6 @@
 from .fourier import (
     AbstractFourierTransform as AbstractFourierTransform,
+    AbstractSpectralTransform as AbstractSpectralTransform,
     convolution as convolution,
     FastFourierTransform as FastFourierTransform,
     FourierTransform as FourierTransform,
@@ -12,9 +13,13 @@ from .solver import (
     exact_linear_solution as exact_linear_solution,
     fourier_term as fourier_term,
     fourier_terms as fourier_terms,
-    FourierLinearTerm as FourierLinearTerm,
     GroupSolution as GroupSolution,
     Lawson as Lawson,
     physical_term as physical_term,
     solve_group_ode as solve_group_ode,
+)
+from .terms import (
+    AbstractExponentialTerm as AbstractExponentialTerm,
+    DiagonalLinearTerm as DiagonalLinearTerm,
+    FourierLinearTerm as FourierLinearTerm,
 )

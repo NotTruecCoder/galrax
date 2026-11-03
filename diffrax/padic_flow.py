@@ -1,0 +1,26 @@
+"""Exact p-adic dynamics.
+
+Flows of `dx/dt = f(x)` and `dx/dt = f(t, x)` with `x` in `Z_p^d`, `p`-adic time and a
+polynomial `f`, computed exactly modulo `p^K` for all points and times at once: Lie
+series in `(t, x)`, table-driven evaluation, Mahler interpolation of iterates,
+flow-box (rectifying) coordinates by Newton's method, hitting and return times, orbit
+averages, events, equilibria and linearisation, and Koopman operators with
+ultrametric diffusion. Discrete maps `x -> T(x)` are analysed through their cycle tree
+and minimal decomposition. Flows run on `int64` JAX arrays.
+"""
+
+from ._padic_flow import (
+    advection_diffusion as advection_diffusion,
+    Ball as Ball,
+    Component as Component,
+    Cycle as Cycle,
+    Equilibrium as Equilibrium,
+    EventSet as EventSet,
+    KoopmanOperator as KoopmanOperator,
+    Linearization as Linearization,
+    PAdicEvent as PAdicEvent,
+    PAdicFlow as PAdicFlow,
+    PAdicMap as PAdicMap,
+    Residues as Residues,
+    TimeDependentFlow as TimeDependentFlow,
+)

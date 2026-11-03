@@ -7,7 +7,17 @@ $$\frac{dp}{dt} = \lambda * p + p * \mu + N(t, p), \qquad p : G \to \mathbb{C},$
 
 where $*$ is the group convolution $(f * h)(x) = \sum_y f(y)\, h(y^{-1}x)$ and $N$ is any nonlinearity. Examples are heat equations and random walks on Cayley graphs, reaction–diffusion on groups, and nonlinear Schrödinger equations on groups.
 
-It is a fork of [Diffrax](https://github.com/patrick-kidger/diffrax): all of Diffrax is included unchanged, and the new functionality lives in `diffrax.group_algebra`.
+On top of it, `diffrax.ultrametric` solves **diffusion on the $p$-adic integers** $\mathbb{Z}_p$: the $p$-adic heat equation $\partial_t u + D^\alpha u = 0$ with the Vladimirov operator, general ultrametric random walks, and their reaction–diffusion versions.
+
+`diffrax.padic_flow` solves **differential equations whose state is $p$-adic**, $dx/dt = f(x)$ or $f(t, x)$ with $x \in \mathbb{Z}_p^d$ and $p$-adic time. The solution is exact to a chosen number of digits, for all initial points and all times at once. It also computes:
+
+- rectifying coordinates, hitting and return times, and orbit averages;
+- events, equilibria and linearisations;
+- the cycle structure of discrete maps $x \mapsto T(x)$.
+
+The flows run in `int64` JAX arrays.
+
+It is a fork of [Diffrax](https://github.com/patrick-kidger/diffrax): all of Diffrax is included unchanged, and the new functionality lives in `diffrax.group_algebra`, `diffrax.ultrametric` and `diffrax.padic_flow`.
 
 ## Features
 
@@ -71,9 +81,143 @@ $$U_i = e^{c_i h L} X_n + h \sum_j a_{ij} e^{(c_i - c_j) h L} N(U_j), \qquad X_{
 
 with $e^{\tau L} X = e^{\tau A} X e^{\tau B}$ and the Butcher tableau of the wrapped Diffrax solver.
 
+## Diffusion on the p-adic integers
+
+An ultrametric diffusion operator on $\mathbb{Z}_p$ moves mass between points according to their $p$-adic distance:
+
+$$(Lf)(x) = \int_{\mathbb{Z}_p} w(|x - y|_p)\,\bigl(f(y) - f(x)\bigr)\,dy - a f(x).$$
+
+The Vladimirov operator, the $p$-adic analogue of the fractional Laplacian, is the case $w(r) \propto r^{-\alpha - 1}$. These operators model relaxation in hierarchical energy landscapes (Avetisov, Bikulov, Kozyrev), such as glasses and protein dynamics.
+
+Two facts make them easy to compute with, and the module is built on them:
+
+1. **No discretisation error.** Seen from a point $x$, every ball of radius $p^{-n}$ other than its own lies at a single distance. So $L$ maps functions that are constant on such balls to functions of the same kind. These are functions on the cyclic group $\mathbb{Z}/p^n$, where $L$ is exactly a convolution with a radial kernel. The equation is therefore a `GroupODE`, and all of `diffrax.group_algebra` applies.
+2. **Kozyrev wavelets diagonalise it.** The wavelets $\psi_{m,a,j}(x) = p^{m/2} e^{2\pi i j (x - a)/p^{m+1}} \mathbf{1}_{a + p^m\mathbb{Z}_p}(x)$ are eigenfunctions, with an eigenvalue that depends only on the level $m$. For $D^\alpha$ it is $p^{\alpha(m+1)}$. `KozyrevTransform` computes the expansion in $O(p^n)$ operations: one FFT of size $p$ per ball. It plugs into `solve_group_ode` as the coordinates for `Lawson`, so the stiff diffusion is integrated exactly while the reaction term is integrated by Runge–Kutta.
+
+```python
+import jax
+import jax.numpy as jnp
+import diffrax.group_algebra as ga
+import diffrax.ultrametric as um
+
+jax.config.update("jax_enable_x64", True)
+
+# Z_3 known to 6 digits: 729 balls of radius 3^-6.
+Z = um.PAdicIntegers(p=3, n=6)
+
+# L = -D^alpha, for a walk that is killed when it jumps out of Z_3.
+L = um.UltrametricOperator.vladimirov(Z, alpha=1.0)
+print(-L.eigenvalues[:4])  # [0.75 3. 9. 27.]: the killing rate, then 3^(m+1)
+
+# The p-adic heat equation du/dt + D^alpha u = 0, from a uniform density on 1 + 27 Z_3.
+ball = Z.ball(center=1, level=3)
+u0 = ball / Z.integrate(ball.astype(float))
+u = L.evolve(u0, t=2.0)
+print(Z.integrate(u))  # survival probability e^{-0.75 t} = 0.2231
+
+# Reaction-diffusion du/dt = -D^alpha u + 5 u (1 - u), solved in Kozyrev wavelets.
+problem = L.problem(
+    0.1 * u0 / u0.max(), t0=0.0, t1=5.0,
+    nonlinearity=lambda t, u, args: 5.0 * u * (1 - u),
+)
+solution = ga.solve_group_ode(problem, transform=um.KozyrevTransform(Z), ts=jnp.linspace(0, 5, 6))
+print(solution.ys[-1].min(), solution.ys[-1].max())  # 0.85 0.85: 5 (1 - u) = 0.75
+```
+
+## Exact flows of p-adic differential equations
+
+Take $dx/dt = f(x)$ with a state $x \in \mathbb{Z}_p^d$. A path $\mathbb{R} \to \mathbb{Z}_p$ is constant, because $\mathbb{R}$ is connected and $\mathbb{Z}_p$ is totally disconnected. Time is therefore $p$-adic as well: $t \in \mathbb{Z}_p$. Let $f$ be a polynomial with coefficients divisible by $p$ (by $4$ when $p = 2$). Then, with $D = f \cdot \nabla$:
+
+- $D^n x$ is divisible by $p^n$, so the Lie series $\varphi_t(x) = \sum_n t^n D^n x / n!$ converges for every $t$ and $x$.
+- Modulo $p^K$, the series is a polynomial in $(t, x)$ with integer coefficients.
+
+`PAdicFlow` builds that polynomial once, exactly, and then answers queries with no time stepping and no rounding.
+
+- **Exact flow for any $(t, x)$** with two polynomial evaluations. Write $t = t_{lo} + \sigma$ with $t_{lo} < p^J$. Then $\varphi_t = \varphi_\sigma \circ \varphi_{t_{lo}}$, where $\varphi_{t_{lo}}$ comes from a table of $p^J$ polynomials. The time $\sigma$ is $p$-adically small, so $\varphi_\sigma$ needs only a few Lie terms. This is the way table-driven `exp` is computed. The full series (`method="taylor"`) gives bit-identical results.
+- **Every query is independent**, so batches of millions of times and points run in one call. The arithmetic is division-free `int64` with Barrett reduction, under `jit`.
+- **Mahler interpolation.** The iterates of $\varphi_1$ determine the flow at every $p$-adic time: $\varphi_t(x) = \sum_n \binom{t}{n} \Delta^n(x)$ with $\Delta^n(x)$ divisible by $p^n$.
+- **Orbits are balls.** In one dimension, the orbit $\{\varphi_t(x) : t \in \mathbb{Z}_p\}$ of a non-equilibrium point is the whole ball $B(x, |f(x)|_p)$. The map $t \mapsto \varphi_t(x)$ multiplies distances by exactly $|f(x)|_p$. In $d$ dimensions the orbit is a curve with the same property.
+- **Flow-box coordinates.** Around $x$, every point of $B(x, |f(x)|_p)$ is written uniquely as $\varphi_s(w)$, with $w$ on a transversal through $x$. In these coordinates the flow is $s \mapsto s + t$. They are computed by Newton's method, which doubles the number of correct digits per step.
+- **Exact answers by formula**, from the flow-box coordinates:
+  - the first time the orbit enters a ball;
+  - return times, $p^{\max(m - k, 0)}$;
+  - orbit averages of locally constant functions, from $p^{m-k}$ evaluations instead of a long sum.
+- **Koopman operators.** $U u = u \circ \varphi_\tau$ on $(\mathbb{Z}/p^n)^d$, diagonalised by an FFT along each cycle. Combined with `diffrax.ultrametric`, the flow is an isometry that preserves the Haar measure, so $U$ commutes with ultrametric diffusion. Hence $p$-adic advection–diffusion $du/dt = Lu + \kappa(U - I)u$ is solved exactly.
+- **More digits.** Up to $p^K < 2^{31}$ products fit in one `int64`. Beyond that, up to about twice as many digits (38 for $p = 3$, 61 for $p = 2$), residues still fit in `int64`. Products are then formed from half-length digits $a = a_0 + B a_1$ with $B^2 \equiv 0$, which takes three machine products. This mode is selected automatically.
+- **Time-dependent equations** $dx/dt = f(t, x)$, for any $f$ with $p$-adic integer coefficients, from $t_0$ to $t_0 + p\,\mathbb{Z}_p$.
+  - Time cannot range over all of $\mathbb{Z}_p$: $dx/dt = p\,t^{p^2 - 1}$ gives $x = x_0 + t^{p^2}/p$, which leaves $\mathbb{Z}_p$.
+  - On $t_0 + p\,\mathbb{Z}_p$ the problem becomes autonomous in $(t, x)$, with a field divisible by $p$.
+- **Events**, in the spirit of `diffrax.Event`: the condition $g(\varphi_t(x)) = 0$ (to a chosen number of digits) for polynomials $g$.
+  - $p$-adic time has no order, so the result is the whole set of times, a finite union of balls in $\mathbb{Z}_p$, from which the first integer time is read off.
+  - $t \mapsto g(\varphi_t(x))$ is a power series known exactly. Balls in time are refined digit by digit using its Taylor expansion, and Strassmann's theorem bounds the number of exact zeros.
+- **Equilibria and linearisation.**
+  - All zeros of $f$ in $\mathbb{Z}_p^d$ are found by the same refinement in space. Simple zeros are certified by Hensel's lemma.
+  - Around a simple equilibrium in one dimension, the Poincaré–Siegel coordinate $h$ satisfies $h(\varphi_t(x)) = e^{\lambda t} h(x)$.
+  - $h$ is computed with a proved convergence radius and tail bound. It gives the flow, and orbit times via the $p$-adic logarithm, independently of the Lie series.
+- **Discrete maps.** `PAdicMap` handles a polynomial or any 1-Lipschitz function, such as a T-function.
+  - It builds the tree of cycles on $\mathbb{Z}/p^k$: each cycle grows, splits, partially splits or grows tails, through the map it induces on the $p$ balls above it.
+  - It returns the minimal decomposition and decides minimality (ergodicity).
+  - For polynomials, growth is permanent beyond the level given by Desjardins–Zieve and Fan–Liao, so minimal components are recognised exactly.
+
+```python
+flow = pf.PAdicFlow(p=3, precision=38, field=[0, -3, 0, 3])  # 38 digits, "double" products
+
+event = pf.PAdicEvent({(1,): 1, (0,): -29}, depth=4)  # phi_t(2) = 29 mod 3^4
+times = flow.event_times(event, 2)
+print(times.balls, times.first())  # [Ball(center=(6,), level=2)] 6: every t = 6 mod 9
+
+lin = flow.linearization(flow.equilibria()[2])  # around x* = -1
+x = (lin.equilibrium + 15) % 3**38
+print(lin.flow_map(12345, x) == int(flow.flow(12345, x)))  # True
+
+growth = pf.TimeDependentFlow(3, 19, [{(1, 1): 1}])  # dx/dt = t x
+print(growth.flow(1, 22, 5))  # x(22) from x(1) = 5
+
+doubling = pf.PAdicMap(5, [0, 2])  # x -> 2x on Z_5
+print(doubling.minimal_decomposition(4))  # the spheres |x| = 5^-k are minimal; 0 is fixed
+print(pf.PAdicMap(2, lambda x: x + (x * x | 5)).is_minimal(16))  # Klimov-Shamir: True
+```
+
+```python
+import jax
+import numpy as np
+import diffrax.padic_flow as pf
+
+jax.config.update("jax_enable_x64", True)
+
+# dx/dt = 3 (x^3 - x) on Z_3, to 19 digits, for all x in Z_3 and all t in Z_3.
+flow = pf.PAdicFlow(p=3, precision=19, field=[0, -3, 0, 3])
+x = np.array([0, 1, 2, 5])
+print(flow.orbit_level(x))  # [19 19 2 2]: equilibria 0 and 1, orbits 2 + 9 Z_3 and 5 + 9 Z_3
+
+y = flow.flow(t=12345, x=x)  # phi_t(x) mod 3^19, exact
+print(np.array_equal(flow.flow(-12345, y), x))  # True
+
+time, on_orbit = flow.orbit_time(2, y[2])  # rectifying coordinate, by Newton's method
+print(int(time) % 3**17, on_orbit)  # 12345 True
+
+print(flow.first_hitting_time(2, 29, level=4))  # first n with phi_n(2) = 29 mod 3^4: 6
+print(flow.return_time(2, level=10))  # 3^(10 - 2) = 6561
+
+# The plane: dx/dt = 3 y, dy/dt = -3 x + 3 x^2.
+plane = pf.PAdicFlow(3, 12, [{(0, 1): 3}, {(1, 0): -3, (2, 0): 3}])
+z = plane.flow(100, np.array([1, 2]))
+s, foot = plane.rectify(np.array([1, 2]), z)  # s = 100, foot = [1, 2]
+```
+
+Throughput for $10^6$ random $(t, x)$ per call, on a laptop CPU under `jit`. The results are exact, and both methods agree bit for bit. These numbers have not been measured on a GPU.
+
+| $p$, digits | Lie terms $N$ | Degree | `"table"` | `"taylor"` | `rectify` |
+|---|---|---|---|---|---|
+| 3, 19 | 36 | 33 | 2.0 M/s | 0.1 M/s | 0.16 M/s |
+| 5, 13 | 16 | 13 | 2.7 M/s | 0.6 M/s | 0.39 M/s |
+| 7, 11 | 12 | 11 | 2.2 M/s | 0.9 M/s | 0.33 M/s |
+
+On CPU, Barrett reduction is 1.4× faster than the integer remainder.
+
 ## API
 
-All of the following live in `diffrax.group_algebra`.
+The following live in `diffrax.group_algebra`.
 
 | Name | What it is |
 |---|---|
@@ -85,7 +229,30 @@ All of the following live in `diffrax.group_algebra`.
 | `exact_linear_solution` | The exact solution of a linear problem. |
 | `Lawson` | Integrating-factor version of an explicit Diffrax Runge–Kutta solver. |
 | `solve_group_ode` | Solve a `GroupODE` with any Diffrax solver; returns a `GroupSolution`. |
-| `fourier_terms`, `fourier_term`, `physical_term`, `FourierLinearTerm` | The Diffrax terms, for calling `diffrax.diffeqsolve` yourself (for example to differentiate through the solve). |
+| `fourier_terms`, `fourier_term`, `physical_term` | The Diffrax terms, for calling `diffrax.diffeqsolve` yourself (for example to differentiate through the solve). |
+| `AbstractSpectralTransform` | Base class for coordinates in which the linear part is exponentiated exactly; implemented by the Fourier transforms and by `KozyrevTransform`. |
+| `AbstractExponentialTerm`, `FourierLinearTerm`, `DiagonalLinearTerm` | Linear terms with an exact flow, as used by `Lawson`. |
+
+The following live in `diffrax.ultrametric`.
+
+| Name | What it is |
+|---|---|
+| `PAdicIntegers(p, n)` | $\mathbb{Z}_p$ known to $n$ digits: digits, valuations, $p$-adic norms and distances, balls, Haar integrals, rationals as $p$-adic integers. |
+| `UltrametricOperator` | $L$ from its rates $w(p^{-k})$ and absorption $a$; `vladimirov(integers, alpha)`, `from_function`. Applies in $O(n p^n)$, exposes the kernel and the eigenvalues, evolves exactly with `evolve`, and builds a `GroupODE` with `problem`. |
+| `KozyrevTransform` | The Kozyrev wavelet expansion: `forward`, `inverse`, `basis`, `spectrum` of radial kernels; usable as the `transform` of `solve_group_ode`. |
+
+The following live in `diffrax.padic_flow`.
+
+| Name | What it is |
+|---|---|
+| `PAdicFlow(p, precision, field)` | The flow of a polynomial field divisible by $p$. `flow(t, x)` (`"table"` or `"taylor"`), `vector_field`, `mahler_coefficients`, `orbit_level`, `rectify` (flow-box coordinates), `orbit_time`, `first_hitting_time`, `return_time`, `orbit_average`, `event_times`, `first_event`, `equilibria`, `jacobian`, `linearization`. |
+| `TimeDependentFlow(p, precision, field)` | $dx/dt = f(t, x)$ from $t_0$ to $t_1 \in t_0 + p\,\mathbb{Z}_p$; the underlying autonomous flow in $(t, x)$ is `autonomous`. |
+| `PAdicEvent(condition, depth)`, `EventSet` | An event $g(\varphi_t(x)) = 0$ and its set of times: `balls`, `first()`, `measure()`, `zero_bound`, membership. |
+| `Equilibrium`, `Linearization` | Zeros of $f$ (with Hensel certificates), and linearising coordinates: `forward`, `inverse`, `flow_map`, `orbit_time`. |
+| `PAdicMap(p, map)`, `Cycle`, `Component` | Discrete maps: `cycle_tree`, `cycles(level)`, `minimal_decomposition`, `is_minimal`, `is_bijective`. |
+| `KoopmanOperator(flow, level, time=1)` | $u \mapsto u \circ \varphi_\tau$ on $(\mathbb{Z}/p^n)^d$: its cycles, and `evolve_jumps`, which computes $e^{t\kappa(U - I)}$ by an FFT along each cycle. |
+| `advection_diffusion(koopman, operator, u0, t, rate)` | The exact solution of $du/dt = Lu + \kappa(U - I)u$, with $L$ an `UltrametricOperator`. |
+| `Residues(p, precision)` | Arithmetic in $\mathbb{Z}/p^K$ on `int64` arrays: Barrett or two-word products, valuations, unit inverses by Newton's method, exact division. |
 
 ## Notes and limitations
 
@@ -93,6 +260,16 @@ All of the following live in `diffrax.group_algebra`.
 - Computing the representations costs about $O(|G|^3)$, so groups up to a few thousand elements are practical. The fast transform also needs the representations of every subgroup in its chain.
 - `Lawson` has linear dense output between steps.
 - The nonlinearity must be a JAX function. For a real problem (real `y0` and kernels) it must map real arrays to real arrays.
+- On $\mathbb{Z}/p^n$, `UltrametricOperator` and `KozyrevTransform` are $O(n p^n)$ and work for millions of points. A `GroupODE`, however, needs the `Group`, which stores a Cayley table of $p^{2n}$ entries. Solving with `solve_group_ode` is therefore limited to a few thousand points. `KozyrevTransform` never computes representations, and its coordinates are a single array rather than one block per representation, so it also compiles much faster than `FourierTransform` on these groups.
+- Kozyrev coefficients are complex, so a real problem is solved in $2p^n$ real coordinates.
+- The flows need 64-bit JAX (`jax_enable_x64`).
+- Precision is limited to $p^K < 2^{62}$, which is 61 digits for $p = 2$, 38 for $p = 3$, 26 for $p = 5$ and 22 for $p = 7$. Up to $p^K < 2^{31}$ (30, 19, 13 and 11 digits) one product is one machine multiplication; beyond that it is three.
+- Events, equilibria, linearisation and maps run on the host with exact Python integers. They are built from the device-side flow, but each search is sequential.
+- Linearisation is implemented for $d = 1$ only. In higher dimension, convergence needs arithmetic conditions on the eigenvalues (Herman–Yoccoz).
+- Fields must be polynomials with coefficients divisible by $p$ (by $4$ for $p = 2$); scaling time by $p$ reduces the general case to this one. The polynomials are stored densely, so precomputation and memory grow like $(\deg)^d$. Use dimension 1–3.
+- On what is known: interpolating iterates by Mahler series is due to Bell and Poonen. The behaviour of cycles of polynomial maps (grows, splits, ...) and the permanence of growth are due to Desjardins–Zieve and Fan–Liao. Convergence of one-dimensional $p$-adic linearisation is due to Herman–Yoccoz.
+- "Orbits of a flow are balls $B(x, |f(x)|_p)$ with a similarity parametrisation" follows from the bound $|D^n x / n!| < |f(x)|$. It can also be read off Fan–Liao applied to the time-one map, and we found no separate statement of it.
+- As far as we could find, the computational side is not in the literature: exact global flows in machine integers by table and Lie series, flow-box coordinates by Newton's method, event sets by ball refinement, and the Koopman and diffusion coupling.
 
 ## Development
 
@@ -100,7 +277,7 @@ All of the following live in `diffrax.group_algebra`.
 git clone https://github.com/NotTruecCoder/galrax.git
 cd galrax
 pip install -e . pytest scipy beartype
-pytest test/test_group_algebra.py
+pytest test/test_group_algebra.py test/test_ultrametric.py test/test_padic_flow.py
 ```
 
 The full Diffrax test suite also runs with `pytest`.
@@ -118,4 +295,4 @@ Galrax is built on [Diffrax](https://github.com/patrick-kidger/diffrax) by Patri
 }
 ```
 
-References for the methods: W. Burnside and J. D. Dixon (character tables and representations), M. Clausen, D. Maslen and D. Rockmore (fast Fourier transforms on finite groups), J. D. Lawson (integrating factor Runge–Kutta methods, 1967).
+References for the methods: W. Burnside and J. D. Dixon (character tables and representations), M. Clausen, D. Maslen and D. Rockmore (fast Fourier transforms on finite groups), J. D. Lawson (integrating factor Runge–Kutta methods, 1967), V. S. Vladimirov, I. V. Volovich and E. I. Zelenov (*p-adic Analysis and Mathematical Physics*, 1994), S. V. Kozyrev (*Wavelet theory as p-adic spectral analysis*, 2002), V. A. Avetisov, A. H. Bikulov and S. V. Kozyrev (ultrametric diffusion and hierarchical landscapes, 1999), K. Mahler (interpolation of continuous functions on $\mathbb{Z}_p$, 1958), J. P. Bell and B. Poonen ($p$-adic interpolation of iterates), A. Fan and L. Liao (minimal subsystems of polynomial dynamics on $\mathbb{Z}_p$), V. Anashin and A. Khrennikov (*Applied Algebraic Dynamics*, 2009), P. Barrett (modular reduction, 1986), P. T. P. Tang (table-driven elementary functions, 1989), R. Strassmann (zeros of $p$-adic power series, 1928), M.-R. Herman and J.-C. Yoccoz (linearisation over non-archimedean fields, 1983), B. Desjardins and M. Zieve (cycles of polynomial maps on $\mathbb{Z}_p$), M. V. Larin (transitive polynomials, 2002), A. Klimov and A. Shamir (T-functions, 2002).

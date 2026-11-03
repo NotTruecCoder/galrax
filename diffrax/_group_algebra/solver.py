@@ -3,7 +3,6 @@ from typing import ClassVar
 
 import jax
 import jax.numpy as jnp
-import jax.scipy.linalg as jsl
 import jax.tree_util as jtu
 import numpy as np
 
@@ -23,8 +22,9 @@ from .._step_size_controller import (
     PIDController,
 )
 from .._term import AbstractTerm, MultiTerm, ODETerm, WrapTerm
-from .fourier import AbstractFourierTransform, FourierTransform
+from .fourier import AbstractSpectralTransform, FourierTransform
 from .problem import GroupODE
+from .terms import AbstractExponentialTerm, to_complex, to_real
 
 
 def _unwrap(term: AbstractTerm) -> AbstractTerm:
@@ -33,100 +33,13 @@ def _unwrap(term: AbstractTerm) -> AbstractTerm:
     return term
 
 
-def _to_complex(y) -> list:
-    return [jax.lax.complex(block[0], block[1]) for block in y]
-
-
-def _to_real(x) -> tuple:
-    return tuple(jnp.stack([block.real, block.imag]) for block in x)
-
-
 #
 # Terms
 #
 
 
-class FourierLinearTerm(AbstractTerm):
-    """The linear part `L p = lambda * p + p * mu` of a `GroupODE`, in the real
-    coordinates of `AbstractFourierTransform.to_coordinates`. In the block of `rho`,
-    with `X` the coordinates, `A = lambdahat(rho)` and `B = muhat(rho)`,
-
-    `L X = A X + X B`,  `e^{tau L} X = e^{tau A} X e^{tau B}`.
-
-    **Arguments:**
-
-    - `left`: the blocks `A`, one per representation, or `None` where `lambda` is
-        absent. Each block is stored as an array of shape `(2, d, d)` holding its real
-        and imaginary parts, so that the term contains no complex arrays.
-    - `right`: the blocks `B`, likewise.
-    """
-
-    left: tuple
-    right: tuple
-
-    @classmethod
-    def from_problem(
-        cls, problem: GroupODE, transform: AbstractFourierTransform
-    ) -> "FourierLinearTerm":
-        def blocks(kernel):
-            if kernel is None:
-                return (None,) * len(transform.degrees)
-            return _to_real(transform.forward(kernel))
-
-        return cls(blocks(problem.left_kernel), blocks(problem.right_kernel))
-
-    def _blocks(self):
-        def complex_or_none(blocks):
-            return [None if b is None else jax.lax.complex(b[0], b[1]) for b in blocks]
-
-        return complex_or_none(self.left), complex_or_none(self.right)
-
-    def vf(self, t: RealScalarLike, y: Y, args: Args) -> VF:
-        out = []
-        left, right = self._blocks()
-        for a, b, x in zip(left, right, _to_complex(y)):
-            value = jnp.zeros_like(x)
-            if a is not None:
-                value = value + a @ x
-            if b is not None:
-                value = value + x @ b
-            out.append(value)
-        return _to_real(out)
-
-    def contr(self, t0: RealScalarLike, t1: RealScalarLike, **kwargs) -> RealScalarLike:
-        return t1 - t0
-
-    def prod(self, vf: VF, control: RealScalarLike) -> Y:
-        return jtu.tree_map(lambda v: v * control, vf)
-
-    def exponential(self, tau) -> list:
-        """The pairs `(e^{tau A}, e^{tau B})`, one per representation (`None` where the
-        kernel is absent).
-        """
-        left, right = self._blocks()
-        return [
-            (
-                None if a is None else jsl.expm(jnp.asarray(tau, a.dtype) * a),
-                None if b is None else jsl.expm(jnp.asarray(tau, b.dtype) * b),
-            )
-            for a, b in zip(left, right)
-        ]
-
-    @staticmethod
-    def apply(exponential, x) -> list:
-        """`e^{tau L} x` for complex blocks `x`, given `exponential(tau)`."""
-        out = []
-        for (left, right), block in zip(exponential, x):
-            if left is not None:
-                block = left @ block
-            if right is not None:
-                block = block @ right
-            out.append(block)
-        return out
-
-
-class _FourierNonlinearity:
-    def __init__(self, problem: GroupODE, transform: AbstractFourierTransform):
+class _CoordinateNonlinearity:
+    def __init__(self, problem: GroupODE, transform: AbstractSpectralTransform):
         self.problem = problem
         self.transform = transform
 
@@ -142,23 +55,24 @@ class _FourierNonlinearity:
 
 
 def fourier_terms(
-    problem: GroupODE, transform: AbstractFourierTransform | None = None
+    problem: GroupODE, transform: AbstractSpectralTransform | None = None
 ) -> MultiTerm:
-    """`MultiTerm(FourierLinearTerm, ODETerm)`: the linear and nonlinear parts of
-    `problem` in Fourier coordinates, as needed by `Lawson`.
+    """`MultiTerm(linear, ODETerm)`: the linear and nonlinear parts of `problem` in the
+    coordinates of `transform` (by default the Fourier transform), as needed by
+    `Lawson`.
     """
     transform = _check_transform(problem, transform)
     return MultiTerm(
-        FourierLinearTerm.from_problem(problem, transform),
-        ODETerm(_FourierNonlinearity(problem, transform)),
+        transform.linear_term(problem),
+        ODETerm(_CoordinateNonlinearity(problem, transform)),
     )
 
 
 def fourier_term(
-    problem: GroupODE, transform: AbstractFourierTransform | None = None
+    problem: GroupODE, transform: AbstractSpectralTransform | None = None
 ) -> ODETerm:
-    """The whole vector field of `problem` in Fourier coordinates, as an `ODETerm`
-    for any Diffrax solver.
+    """The whole vector field of `problem` in the coordinates of `transform`, as an
+    `ODETerm` for any Diffrax solver.
     """
     linear, nonlinear = fourier_terms(problem, transform).terms
 
@@ -182,7 +96,8 @@ def physical_term(problem: GroupODE) -> ODETerm:
 
 class Lawson(AbstractAdaptiveSolver):
     """Lawson (integrating factor) version of an explicit Runge--Kutta method of
-    Diffrax, for `dX/dt = L X + N(t, X)` with `L` given by a `FourierLinearTerm`:
+    Diffrax, for `dX/dt = L X + N(t, X)` with `L` given by an
+    `AbstractExponentialTerm`, such as `FourierLinearTerm`:
 
     `U_i = e^{c_i h L} X_n + h sum_j a_ij e^{(c_i - c_j) h L} N(t_n + c_j h, U_j)`,
 
@@ -204,7 +119,7 @@ class Lawson(AbstractAdaptiveSolver):
 
     solver: AbstractERK = Tsit5()
 
-    term_structure: ClassVar = MultiTerm[tuple[FourierLinearTerm, ODETerm]]
+    term_structure: ClassVar = MultiTerm[tuple[AbstractExponentialTerm, ODETerm]]
     interpolation_cls: ClassVar[Callable[..., LocalLinearInterpolation]] = (
         LocalLinearInterpolation
     )
@@ -259,15 +174,15 @@ class Lawson(AbstractAdaptiveSolver):
                 for k in range(len(x0))
             ]
 
-        x0 = _to_complex(y0)
+        x0 = to_complex(y0)
         slopes = []
         for i in range(len(c)):
             stage = [(1.0, flow(c[i], x0))]
             for j, aij in enumerate(a[i]):
                 if aij != 0:
                     stage.append((h * aij, flow(c[i] - c[j], slopes[j])))
-            value = nonlinear.vf(t0 + c[i] * dt, _to_real(combine(stage)), args)
-            slopes.append(_to_complex(value))
+            value = nonlinear.vf(t0 + c[i] * dt, to_real(combine(stage)), args)
+            slopes.append(to_complex(value))
 
         carried = [flow(1.0 - ci, slope) for ci, slope in zip(c, slopes)]
         x1 = combine(
@@ -275,9 +190,9 @@ class Lawson(AbstractAdaptiveSolver):
             + [(h * float(bi), k) for bi, k in zip(tableau.b_sol, carried)]
         )
         error = combine([(h * float(bi), k) for bi, k in zip(tableau.b_error, carried)])
-        y1 = _to_real(x1)
+        y1 = to_real(x1)
         dense_info = dict(y0=y0, y1=y1)
-        return y1, _to_real(error), dense_info, None, RESULTS.successful
+        return y1, to_real(error), dense_info, None, RESULTS.successful
 
     def func(self, terms: MultiTerm, t0: RealScalarLike, y0: Y, args: Args) -> VF:
         return terms.vf(t0, y0, args)
@@ -311,7 +226,7 @@ def solve_group_ode(
     ts=None,
     dt0: float | None = None,
     stepsize_controller: AbstractStepSizeController | None = None,
-    transform: AbstractFourierTransform | None = None,
+    transform: AbstractSpectralTransform | None = None,
     space: str = "fourier",
     rtol: float = 1e-6,
     atol: float = 1e-9,
@@ -331,10 +246,12 @@ def solve_group_ode(
         adaptive controller is wrapped in `diffrax.ClipStepSizeController` so that the
         solver steps exactly to `ts`: its dense output is only linear. With a constant
         step size, values at `ts` between steps are interpolated linearly.
-    - `transform`: the Fourier transform. Defaults to `FourierTransform`.
-    - `space`: `"fourier"` to solve for the real Fourier coordinates of
-        `AbstractFourierTransform.to_coordinates` (required by `Lawson`), or
-        `"physical"` to solve for the values on the group directly.
+    - `transform`: the `AbstractSpectralTransform` whose coordinates are solved for.
+        Defaults to `FourierTransform`; `FastFourierTransform` is faster on large
+        groups, and `diffrax.ultrametric.KozyrevTransform` diagonalises radial kernels
+        on `Z/p^n`.
+    - `space`: `"fourier"` to solve for the real coordinates of `transform` (required
+        by `Lawson`), or `"physical"` to solve for the values on the group directly.
     - `rtol`, `atol`: tolerances of the default `PIDController`.
     - `max_steps`: passed to `diffeqsolve`.
     - `**kwargs`: any other arguments of `diffeqsolve`, such as `adjoint`.
@@ -397,20 +314,22 @@ def solve_group_ode(
 
 
 def exact_linear_solution(
-    problem: GroupODE, ts, transform: AbstractFourierTransform | None = None
+    problem: GroupODE, ts, transform: AbstractSpectralTransform | None = None
 ):
-    """The exact solution of a linear `problem` at the times `ts`:
+    """The exact solution `p(t) = e^{(t - t0) L} y0` of a linear `problem` at the times
+    `ts`, computed in the coordinates of `transform`: in Fourier coordinates
     `phat(t)(rho) = e^{(t - t0) A} phat(t0)(rho) e^{(t - t0) B}`. Returns an array of
     shape `(len(ts),) + y0.shape`.
     """
     if not problem.is_linear:
         raise ValueError("`exact_linear_solution` needs a linear problem.")
     transform = _check_transform(problem, transform)
-    linear = FourierLinearTerm.from_problem(problem, transform)
-    x0 = transform.forward(problem.y0)
+    linear = transform.linear_term(problem)
+    x0 = to_complex(transform.to_coordinates(problem.y0))
 
     def at(t):
-        return transform.inverse(linear.apply(linear.exponential(t - problem.t0), x0))
+        x = linear.apply(linear.exponential(t - problem.t0), x0)
+        return transform.from_coordinates(to_real(x))
 
     ys = jax.vmap(at)(jnp.asarray(ts, dtype=float))
     return ys.real if problem.is_real else ys
@@ -419,8 +338,8 @@ def exact_linear_solution(
 def _check_transform(problem, transform):
     if transform is None:
         return FourierTransform(problem.group)
-    if not isinstance(transform, AbstractFourierTransform):
-        raise TypeError("`transform` must be an `AbstractFourierTransform`.")
+    if not isinstance(transform, AbstractSpectralTransform):
+        raise TypeError("`transform` must be an `AbstractSpectralTransform`.")
     if transform.group is not problem.group:
         raise ValueError("`transform` must be built on the group of `problem`.")
     return transform
