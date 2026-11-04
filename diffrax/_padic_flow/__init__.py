@@ -1,4 +1,4 @@
-from .arithmetic import Residues as Residues
+from .arithmetic import Limbs as Limbs, Residues as Residues
 from .equilibria import Equilibrium as Equilibrium, Linearization as Linearization
 from .events import EventSet as EventSet, PAdicEvent as PAdicEvent
 from .flow import PAdicFlow as PAdicFlow, TimeDependentFlow as TimeDependentFlow

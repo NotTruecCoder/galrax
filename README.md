@@ -145,7 +145,8 @@ Take $dx/dt = f(x)$ with a state $x \in \mathbb{Z}_p^d$. A path $\mathbb{R} \to 
   - return times, $p^{\max(m - k, 0)}$;
   - orbit averages of locally constant functions, from $p^{m-k}$ evaluations instead of a long sum.
 - **Koopman operators.** $U u = u \circ \varphi_\tau$ on $(\mathbb{Z}/p^n)^d$, diagonalised by an FFT along each cycle. Combined with `diffrax.ultrametric`, the flow is an isometry that preserves the Haar measure, so $U$ commutes with ultrametric diffusion. Hence $p$-adic advection–diffusion $du/dt = Lu + \kappa(U - I)u$ is solved exactly.
-- **More digits.** Up to $p^K < 2^{31}$ products fit in one `int64`. Beyond that, up to about twice as many digits (38 for $p = 3$, 61 for $p = 2$), residues still fit in `int64`. Products are then formed from half-length digits $a = a_0 + B a_1$ with $B^2 \equiv 0$, which takes three machine products. This mode is selected automatically.
+- **More digits.** Up to $p^K < 2^{31}$ products fit in one `int64`. Beyond that, up to about twice as many digits (38 for $p = 3$, 61 for $p = 2$), residues still fit in `int64`. Products are then formed from half-length digits $a = a_0 + B a_1$ with $B^2 \equiv 0$, which takes three machine products. Beyond that there is no limit: residues become $L$ limbs $\sum a_i B^i$ along an extra axis, and since $B^L \equiv 0$ a product needs only the $L(L+1)/2$ limb products with $i + j < L$ and one pass of carries. The mode is selected automatically; results with more than about 62 bits come back as Python integers.
+- **Sparse storage in several dimensions.** The Lie polynomials and the reduced tables have bounded total degree, so only the $\binom{\deg + d}{d}$ monomials of the simplex are stored, instead of $(\deg + 1)^d$, and they are evaluated by Horner's rule nested over the simplex, one multiplication per coefficient. This is the default for $d > 1$.
 - **Time-dependent equations** $dx/dt = f(t, x)$, for any $f$ with $p$-adic integer coefficients, from $t_0$ to $t_0 + p\,\mathbb{Z}_p$.
   - Time cannot range over all of $\mathbb{Z}_p$: $dx/dt = p\,t^{p^2 - 1}$ gives $x = x_0 + t^{p^2}/p$, which leaves $\mathbb{Z}_p$.
   - On $t_0 + p\,\mathbb{Z}_p$ the problem becomes autonomous in $(t, x)$, with a field divisible by $p$.
@@ -215,9 +216,12 @@ Throughput for $10^6$ random $(t, x)$ per call under `jit`, on a laptop GPU with
 | 5, 13, 1 | 13 → 2 | 125 → 199 M/s | 19 → 48 M/s |
 | 7, 11, 1 | 11 → 2 | 124 → 196 M/s | 17 → 49 M/s |
 | 3, 38, 1 (two-word) | 75 → 5 | 23 → 67 M/s | 2.8 → 14 M/s |
-| 3, 12, 2 | 12 → 3 | 19 → 46 M/s | 6.1 → 10.5 M/s |
+| 3, 12, 2 | 12 → 3 | 19 → 187 M/s | 6.1 → 29 M/s |
+| 3, 8, 3 | 5 (dense → sparse) | 11 → 200 M/s | 3.3 → 11 M/s |
 
-The full Lie series (`method="taylor"`) runs at 2–60 M/s on the same GPU. The laptop CPU is 30–100 times slower than the GPU. Barrett reduction is the fastest on CPU; on GPU the plain `int64` remainder is, and a `float32` quotient estimate (`"barrett32"`) does not help. Tables of 0.5–10 MB are the fastest; larger ones fall out of cache, which is why `table_size` defaults to $2^{20}$ entries.
+In two and three dimensions most of the gain is sparse storage: with the same tables stored densely, the plane runs at 42 M/s and the three-dimensional case at 11 M/s. With limbs, 60 digits of $\mathbb{Z}_3$ run at 2.9 M/s, 100 digits at 0.5 M/s, and 100 digits of $\mathbb{Z}_2$ at 2.7 M/s. At 38 digits limbs are 3.6 times slower than two-word products (18 against 66 M/s), so two-word products are used up to $2^{62}$.
+
+The full Lie series (`method="taylor"`) runs at 2–60 M/s on the same GPU. On the laptop's CPU (batch $10^5$) the same cases run at 0.7–5.8 M/s for `flow`, 2.3–3.3 times faster than without space reduction, so the GPU is 35–70 times faster. The plain `int64` remainder was the fastest reduction on the GPU and on the CPU under Linux, and is the default; Barrett reduction was faster only with a native Windows build of JAX, and a `float32` quotient estimate (`"barrett32"`) does not help. Tables of 0.5–10 MB are the fastest; larger ones fall out of cache, which is why `table_size` defaults to $2^{20}$ entries.
 
 ## API
 
@@ -249,14 +253,15 @@ The following live in `diffrax.padic_flow`.
 
 | Name | What it is |
 |---|---|
-| `PAdicFlow(p, precision, field)` | The flow of a polynomial field divisible by $p$. Options: `table_digits`, `space_digits` (default: the largest that fits `table_size`), `reduction`. `flow(t, x)` (`"table"` or `"taylor"`), `vector_field`, `mahler_coefficients`, `orbit_level`, `rectify` (flow-box coordinates), `orbit_time`, `first_hitting_time`, `return_time`, `orbit_average`, `event_times`, `first_event`, `equilibria`, `jacobian`, `linearization`. |
+| `PAdicFlow(p, precision, field)` | The flow of a polynomial field divisible by $p$. Options: `table_digits`, `space_digits` (default: the largest that fits `table_size`), `reduction`, `storage` (`"dense"` or `"sparse"`). `flow(t, x)` (`"table"` or `"taylor"`), `vector_field`, `mahler_coefficients`, `orbit_level`, `rectify` (flow-box coordinates), `orbit_time`, `first_hitting_time`, `return_time`, `orbit_average`, `event_times`, `first_event`, `equilibria`, `jacobian`, `linearization`. |
 | `TimeDependentFlow(p, precision, field)` | $dx/dt = f(t, x)$ from $t_0$ to $t_1 \in t_0 + p\,\mathbb{Z}_p$; the underlying autonomous flow in $(t, x)$ is `autonomous`. |
 | `PAdicEvent(condition, depth)`, `EventSet` | An event $g(\varphi_t(x)) = 0$ and its set of times: `balls`, `first()`, `measure()`, `zero_bound`, membership. |
 | `Equilibrium`, `Linearization` | Zeros of $f$ (with Hensel certificates), and linearising coordinates: `forward`, `inverse`, `flow_map`, `orbit_time`. |
 | `PAdicMap(p, map)`, `Cycle`, `Component` | Discrete maps: `cycle_tree`, `cycles(level)`, `minimal_decomposition`, `is_minimal`, `is_bijective`. |
 | `KoopmanOperator(flow, level, time=1)` | $u \mapsto u \circ \varphi_\tau$ on $(\mathbb{Z}/p^n)^d$: its cycles, and `evolve_jumps`, which computes $e^{t\kappa(U - I)}$ by an FFT along each cycle. |
 | `advection_diffusion(koopman, operator, u0, t, rate)` | The exact solution of $du/dt = Lu + \kappa(U - I)u$, with $L$ an `UltrametricOperator`. |
-| `Residues(p, precision, reduction)` | Arithmetic in $\mathbb{Z}/p^K$ on `int64` arrays: products reduced by `"barrett"`, `"barrett32"`, `"remainder"` or `"double"` (two-word); valuations, unit inverses by Newton's method, exact division. The default is Barrett on CPU and the plain remainder on GPU. |
+| `Residues(p, precision, reduction)` | Arithmetic in $\mathbb{Z}/p^K$ on `int64` arrays: products reduced by `"barrett"`, `"barrett32"`, `"remainder"` or `"double"` (two-word); valuations, unit inverses by Newton's method, exact division. The default is the plain remainder. |
+| `Limbs(p, precision)` | The same for any number of digits, with residues stored as `int64` limbs along a trailing axis; `decode` returns Python integers. |
 
 ## Notes and limitations
 
@@ -269,10 +274,10 @@ The following live in `diffrax.padic_flow`.
 - The flows need 64-bit JAX (`jax_enable_x64`).
 - On Windows, JAX uses the GPU only under WSL2 (`pip install "jax[cuda12]"`). Set `XLA_PYTHON_CLIENT_PREALLOCATE=false` there, since part of the GPU memory is held by Windows.
 - On a laptop GPU the clock changes under load. Time with warm-up calls and a median, or single runs can differ by a factor of 3.
-- Precision is limited to $p^K < 2^{62}$, which is 61 digits for $p = 2$, 38 for $p = 3$, 26 for $p = 5$ and 22 for $p = 7$. Up to $p^K < 2^{31}$ (30, 19, 13 and 11 digits) one product is one machine multiplication; beyond that it is three.
+- Up to $p^K < 2^{31}$ (30, 19, 13 and 11 digits for $p = 2, 3, 5, 7$) one product is one machine multiplication; up to $2^{62}$ (61, 38, 26 and 22 digits) it is three; beyond that, with $L$ limbs, $L(L+1)/2$. Beyond $2^{62}$ queries return arrays of Python integers, so they cannot be traced by `jit` as a whole; the device work is still batched.
 - Events, equilibria, linearisation and maps run on the host with exact Python integers. They are built from the device-side flow, but each search is sequential.
 - Linearisation is implemented for $d = 1$ only. In higher dimension, convergence needs arithmetic conditions on the eigenvalues (Herman–Yoccoz).
-- Fields must be polynomials with coefficients divisible by $p$ (by $4$ for $p = 2$); scaling time by $p$ reduces the general case to this one. The polynomials are stored densely, so precomputation and memory grow like $(\deg)^d$. Use dimension 1–3.
+- Fields must be polynomials with coefficients divisible by $p$ (by $4$ for $p = 2$); scaling time by $p$ reduces the general case to this one. In several dimensions only monomials of bounded total degree are stored, but precomputation and memory still grow like $\deg^d / d!$. Use dimension 1–4.
 - On what is known: interpolating iterates by Mahler series is due to Bell and Poonen. The behaviour of cycles of polynomial maps (grows, splits, ...) and the permanence of growth are due to Desjardins–Zieve and Fan–Liao. Convergence of one-dimensional $p$-adic linearisation is due to Herman–Yoccoz.
 - "Orbits of a flow are balls $B(x, |f(x)|_p)$ with a similarity parametrisation" follows from the bound $|D^n x / n!| < |f(x)|$. It can also be read off Fan–Liao applied to the time-one map, and we found no separate statement of it.
 - As far as we could find, the computational side is not in the literature: exact global flows in machine integers by table and Lie series, flow-box coordinates by Newton's method, event sets by ball refinement, and the Koopman and diffusion coupling.

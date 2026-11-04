@@ -3,7 +3,14 @@ import math
 import jax.numpy as jnp
 import numpy as np
 
-from .arithmetic import factorial_valuation, Residues, scan_horner, valuation
+from .arithmetic import (
+    factorial_valuation,
+    make_residues,
+    scan_horner,
+    simplex,
+    simplex_horner,
+    valuation,
+)
 from .equilibria import equilibria, Equilibrium, jacobian, Linearization
 from .events import event_times, PAdicEvent
 from .polynomial import (
@@ -58,13 +65,15 @@ class PAdicFlow:
 
     For `d = 1` points are arrays of shape `(...)`; for `d > 1` they have shape
     `(..., d)`. Times and points are integers, read modulo `p^K`, and broadcast
-    against each other.
+    against each other. Beyond about 62 bits (`p^K >= 2^62`) the arithmetic runs on
+    `Limbs`, and results come back as arrays of Python integers.
 
     **Arguments:**
 
     - `p`: a prime.
-    - `precision`: `K`, the number of `p`-adic digits; `p^K` must be below `2^62`
-        (see `Residues`: beyond `2^31`, products use two half-length digits).
+    - `precision`: `K`, the number of `p`-adic digits, unbounded. Up to `p^K < 2^31`
+        a product is one machine multiplication, up to `2^62` three (see `Residues`),
+        and beyond that `L (L + 1) / 2` for `L` limbs (see `Limbs`).
     - `field`: the vector field. For `d = 1`, the coefficients `[c_0, c_1, ...]` of
         `c_0 + c_1 x + ...`. In general, one dictionary `{exponents: coefficient}` per
         component, e.g. `[{(0, 1): 3}, {(1, 0): -3}]` for `(3y, -3x)`. Coefficients
@@ -74,8 +83,13 @@ class PAdicFlow:
         largest `r` whose tables hold at most `table_size` numbers; `0` disables the
         reduction.
     - `table_size`: the budget for `space_digits`, in `int64` entries.
-    - `reduction`: `"barrett"`, `"remainder"` or `"double"`; chosen automatically by
-        default, see `Residues`.
+    - `reduction`: `"barrett"`, `"barrett32"`, `"remainder"`, `"double"` or
+        `"limbs"`; chosen automatically by default, see `Residues`.
+    - `storage`: `"dense"` stores every exponent up to the degree in each variable,
+        `(deg + 1)^d` coefficients per polynomial; `"sparse"` stores only total degree
+        at most `deg`, `C(deg + d, d)` of them, and evaluates them by Horner's rule
+        nested over that simplex. The Lie polynomials and the reduced tables have
+        that total degree, so nothing is lost. Defaults to `"sparse"` for `d > 1`.
     """
 
     def __init__(
@@ -88,8 +102,9 @@ class PAdicFlow:
         space_digits: int | None = None,
         table_size: int = 2**20,
         reduction: str | None = None,
+        storage: str | None = None,
     ):
-        residues = Residues(p, precision, reduction)
+        residues = make_residues(p, precision, reduction)
         p, K = residues.p, residues.precision
         field = parse_field(field, p)
         d = len(field)
@@ -104,8 +119,13 @@ class PAdicFlow:
         if table_digits is None:
             table_digits = max(1, int(math.floor(math.log(32) / math.log(p))))
         table_digits = int(table_digits)
-        if not 1 <= table_digits <= K:
-            raise ValueError(f"`table_digits` must lie in 1, ..., {K}.")
+        widest = min(K, getattr(residues, "width", K))
+        if not 1 <= table_digits <= widest:
+            raise ValueError(f"`table_digits` must lie in 1, ..., {widest}.")
+        if storage is None:
+            storage = "sparse" if d > 1 else "dense"
+        if storage not in ("dense", "sparse"):
+            raise ValueError("`storage` must be 'dense' or 'sparse'.")
 
         self.residues = residues
         self.p = p
@@ -115,48 +135,78 @@ class PAdicFlow:
         self.field = field
         self.field_valuation = rate
         self.table_digits = table_digits
+        self.storage = storage
 
         terms = _terms(p, K, rate)
         self.terms = terms
         taylor = self._divided_series(None)
         self.degree = max(degree(polys) for polys in taylor)
-        self._taylor = np.stack([to_dense(polys, d, self.degree) for polys in taylor])
-        self._field = to_dense(reduce(field, self.modulus), d, degree(field))
+        dense = np.stack([to_dense(polys, d, self.degree) for polys in taylor])
+        dense = np.asarray(residues.asarray(dense))
+        field_dense = to_dense(reduce(field, self.modulus), d, degree(field))
+        self._field = np.asarray(residues.asarray(field_dense))
 
         tail = _terms(p, K, rate + table_digits)
         tail_degree = max(degree(polys) for polys in taylor[:tail])
         self.tail_terms = tail
-        tail_polys = self._taylor[
+        tail_polys = dense[
             (slice(0, tail), slice(None)) + (slice(0, tail_degree + 1),) * d
         ]
+        self._taylor = self._store(dense, self.degree)
 
         size = p**table_digits
         s = jnp.arange(size, dtype=jnp.int64).reshape((size,) + (1,) * (d + 1))
-        table = jnp.zeros((size,) + self._taylor.shape[1:], dtype=jnp.int64)
-        for coefficients in self._taylor[::-1]:
+        s = residues.asarray(s)
+        table = jnp.zeros((size,) + dense.shape[1:], dtype=jnp.int64)
+        for coefficients in dense[::-1]:
             table = residues.add(residues.mul(table, s), jnp.asarray(coefficients))
+
+        def count(deg):
+            if storage == "sparse":
+                return math.comb(deg + d, d)
+            return (deg + 1) ** d
 
         def entries(r):
             head = min(self.degree, -(-K // r) - 1)
             low = min(tail_degree, -(-K // r) - 1)
             centres = p ** (r * d)
-            return centres * d * (size * (head + 1) ** d + tail * (low + 1) ** d)
+            words = getattr(residues, "limbs", 1)
+            return centres * d * words * (size * count(head) + tail * count(low))
 
+        largest = min(K - 1, getattr(residues, "width", K))
         if space_digits is None:
             space_digits = 0
-            for r in range(1, K):
+            for r in range(1, largest + 1):
                 if entries(r) > table_size:
                     break
                 space_digits = r
         space_digits = int(space_digits)
-        if not 0 <= space_digits < K:
-            raise ValueError(f"`space_digits` must lie in 0, ..., {K - 1}.")
+        if not 0 <= space_digits <= largest:
+            raise ValueError(f"`space_digits` must lie in 0, ..., {largest}.")
         self.space_digits = space_digits
-        table = np.asarray(self._recenter(table, space_digits))
-        self.table_degree = table.shape[-1] - 1
+        table = self._recenter(table, space_digits)
+        self.table_degree = table.shape[table.ndim - residues.extra - 1] - 1
+        table = self._store(table, self.table_degree)
         self._table = table.reshape((-1,) + table.shape[2:])
-        tail = np.asarray(self._recenter(jnp.asarray(tail_polys), space_digits))
-        self._tail = np.moveaxis(tail, 1, 0)
+        tail = self._recenter(jnp.asarray(tail_polys), space_digits)
+        self._tail_degree = tail.shape[tail.ndim - residues.extra - 1] - 1
+        self._tail = np.moveaxis(self._store(tail, self._tail_degree), 1, 0)
+
+    def _store(self, dense, deg: int):
+        """Dense coefficients `(..., deg' + 1, ..., deg' + 1)` as stored: unchanged,
+        or for sparse storage the entries of total degree at most `deg`.
+        """
+        dense = np.asarray(dense)
+        if self.storage == "dense":
+            return dense
+        exponents = tuple(np.array(e) for e in zip(*simplex(self.dimension, deg)))
+        return dense[(Ellipsis,) + exponents + (slice(None),) * self.residues.extra]
+
+    def _evaluate(self, coefficients, x, deg: int, index=None):
+        coefficients = jnp.asarray(coefficients)
+        if self.storage == "sparse":
+            return simplex_horner(self.residues, coefficients, x, deg, index)
+        return evaluate(self.residues, coefficients, x, index)
 
     def _recenter(self, coefficients, r: int):
         """Dense polynomials of shape `(L, *rest, deg + 1, ..., deg + 1)` re-expanded
@@ -167,25 +217,30 @@ class PAdicFlow:
         out = jnp.asarray(coefficients)
         if r == 0:
             return out[:, None]
-        centres = jnp.arange(p**r, dtype=jnp.int64)
-        deg = out.shape[-1] - 1
+        centres = res.asarray(jnp.arange(p**r, dtype=jnp.int64))
+        values = out.ndim - res.extra
+        deg = out.shape[values - 1] - 1
         new = min(deg, -(-K // r) - 1)
-        powers = [jnp.ones_like(centres)]
+        powers = [jnp.broadcast_to(res.constant(1), centres.shape)]
         for _ in range(deg):
             powers.append(res.mul(powers[-1], centres))
         for axis in range(d):
-            position = out.ndim - d + axis
-            moved = jnp.moveaxis(out, position, -1)
+            values = out.ndim - res.extra
+            position = values - d + axis
+            moved = jnp.moveaxis(out, position, values - 1)
             pieces = []
             for e in range(new + 1):
-                total = jnp.zeros(moved.shape[:-1] + (p**r,), dtype=jnp.int64)
+                total = res.zeros(res.shape(moved)[:-1] + (p**r,))
                 for f in range(e, deg + 1):
                     weight = res.mul(powers[f - e], math.comb(f, e) % self.modulus)
-                    total = res.add(total, res.mul(moved[..., f, None], weight))
+                    term = jnp.expand_dims(jnp.take(moved, f, axis=values - 1), -1)
+                    if res.extra:
+                        term = jnp.moveaxis(term, -1, -2)
+                    total = res.add(total, res.mul(term, weight))
                 scale = pow(p, r * e, self.modulus) if r * e < K else 0
                 pieces.append(res.mul(total, scale))
-            shifted = jnp.stack(pieces, axis=-1)
-            out = jnp.moveaxis(shifted, (-2, -1), (1 + axis, position + 1))
+            shifted = jnp.stack(pieces, axis=values)
+            out = jnp.moveaxis(shifted, (values - 1, values), (1 + axis, position + 1))
         lead = out.shape[0]
         centre_axes = out.shape[1 : 1 + d]
         rest = out.shape[1 + d :]
@@ -224,40 +279,51 @@ class PAdicFlow:
     # Points and times
     #
 
-    def _flatten(self, *arrays):
+    def _flatten(self, *arrays, encoded: bool = False):
         """Broadcast times or points (given as `(times, is_point)` pairs) to a common
-        batch shape, and flatten them to `(B,)` and `(B, d)`.
+        batch shape, and flatten them to values of shape `(B,)` and `(B, d)`.
         """
+        res, d = self.residues, self.dimension
+        tail = (res.limbs,) if res.extra else ()
         values = []
         shapes = []
         for array, is_point in arrays:
-            array = self.residues.asarray(array)
-            if is_point and self.dimension > 1:
-                if array.ndim == 0 or array.shape[-1] != self.dimension:
-                    raise ValueError(
-                        f"Points of Z_p^{self.dimension} must have shape "
-                        f"(..., {self.dimension})."
-                    )
-                shapes.append(array.shape[:-1])
+            if not encoded:
+                array = res.asarray(array)
+            shape = res.shape(array)
+            if is_point and d > 1:
+                if len(shape) == 0 or shape[-1] != d:
+                    raise ValueError(f"Points of Z_p^{d} must have shape (..., {d}).")
+                shapes.append(shape[:-1])
             else:
-                shapes.append(array.shape)
+                shapes.append(shape)
             values.append((array, is_point))
         batch = jnp.broadcast_shapes(*shapes)
         out = []
         for array, is_point in values:
             if is_point:
-                if self.dimension == 1:
-                    array = array[..., None]
-                array = jnp.broadcast_to(array, batch + (self.dimension,))
-                out.append(array.reshape(-1, self.dimension))
+                if d == 1:
+                    array = jnp.expand_dims(array, array.ndim - res.extra)
+                array = jnp.broadcast_to(array, batch + (d,) + tail)
+                out.append(array.reshape((-1, d) + tail))
             else:
-                out.append(jnp.broadcast_to(array, batch).reshape(-1))
+                out.append(jnp.broadcast_to(array, batch + tail).reshape((-1,) + tail))
         return batch, out
 
     def _unflatten(self, batch, x):
-        if self.dimension == 1:
-            return x.reshape(batch)
-        return x.reshape(batch + (self.dimension,))
+        """Points of value shape `(B, d)` back to `batch`, as values."""
+        tail = x.shape[2:]
+        shape = batch if self.dimension == 1 else batch + (self.dimension,)
+        return self.residues.decode(x.reshape(shape + tail))
+
+    def _scalars(self, batch, t):
+        """Times of value shape `(B,)` back to `batch`, as values."""
+        return self.residues.decode(t.reshape(batch + t.shape[1:]))
+
+    def _select(self, condition, a, b):
+        if self.residues.extra:
+            return np.where(np.asarray(condition), a, b)
+        return jnp.where(condition, a, b)
 
     #
     # The flow
@@ -269,13 +335,13 @@ class PAdicFlow:
         if r == 0:
             return jnp.zeros(x.shape[0], dtype=jnp.int64), x
         scale = self.p**r
-        digits = jnp.remainder(x, scale)
+        digits = self.residues.low(x, r)
         weights = jnp.asarray(
             [scale ** (self.dimension - 1 - j) for j in range(self.dimension)],
             dtype=jnp.int64,
         )
         index = (digits * jnp.broadcast_to(weights, digits.shape)).sum(axis=-1)
-        return index, jnp.floor_divide(x, scale)
+        return index, self.residues.shift(x, r)
 
     def _small_flow(self, sigma, x, digits: int):
         """`phi_sigma(x)` for `sigma` divisible by `p^digits`, `digits >= J`: only the
@@ -285,26 +351,33 @@ class PAdicFlow:
         rate = self.field_valuation + digits
         terms = min(self.tail_terms, _terms(self.p, self.precision, rate))
         centre, y = self._split(x)
-        values = evaluate(res, jnp.asarray(self._tail[:, :terms]), y, centre)
-        return scan_horner(res, jnp.moveaxis(values, 1, -1), sigma[:, None])
+        tail = self._tail[:, :terms]
+        values = self._evaluate(tail, y, self._tail_degree, centre)
+        values = jnp.moveaxis(values, 1, -1 - res.extra)
+        return scan_horner(res, values, sigma[:, None])
 
     def _flow(self, t, x, method: str = "table"):
         res = self.residues
         if method == "taylor":
-            values = evaluate(res, self._taylor[None], x)
-            return scan_horner(res, jnp.moveaxis(values, 1, -1), t[:, None])
+            values = self._evaluate(self._taylor[None], x, self.degree)
+            values = jnp.moveaxis(values, 1, -1 - res.extra)
+            return scan_horner(res, values, t[:, None])
         if method != "table":
             raise ValueError("`method` must be 'table' or 'taylor'.")
-        low = jnp.remainder(t, self.p**self.table_digits)
-        sigma = res.sub(t, low)
+        low = res.low(t, self.table_digits)
+        sigma = res.sub(t, res.asarray(low))
         centre, y = self._split(x)
         row = low * self.p ** (self.space_digits * self.dimension) + centre
-        middle = evaluate(res, jnp.asarray(self._table), y, row)
+        middle = self._evaluate(self._table, y, self.table_degree, row)
         return self._small_flow(sigma, middle, self.table_digits)
 
     def flow(self, t, x, method: str = "table"):
         """`phi_t(x)` modulo `p^K`."""
         batch, (t, x) = self._flatten((t, False), (x, True))
+        return self._unflatten(batch, self._flow(t, x, method))
+
+    def _apply(self, t, x, method: str = "table"):
+        batch, (t, x) = self._flatten((t, False), (x, True), encoded=True)
         return self._unflatten(batch, self._flow(t, x, method))
 
     def vector_field(self, x):
@@ -325,16 +398,19 @@ class PAdicFlow:
         res = self.residues
         batch, (x,) = self._flatten((x, True))
         size = x.shape[0]
-        times = jnp.repeat(jnp.arange(count, dtype=jnp.int64), size)
-        iterates = self._flow(times, jnp.tile(x, (count, 1))).reshape(count, size, -1)
+        times = res.asarray(jnp.repeat(jnp.arange(count, dtype=jnp.int64), size))
+        points = jnp.tile(x, (count,) + (1,) * (x.ndim - 1))
+        iterates = self._flow(times, points).reshape((count,) + x.shape)
         out = []
         for n in range(count):
             total = jnp.zeros_like(iterates[0])
             for j in range(n + 1):
                 weight = (-1) ** (n - j) * math.comb(n, j) % self.modulus
                 total = res.add(total, res.mul(iterates[j], weight))
-            out.append(self._unflatten(batch, total))
-        return jnp.stack(out)
+            out.append(total)
+        stacked = jnp.stack(out)
+        shape = batch if self.dimension == 1 else batch + (self.dimension,)
+        return res.decode(stacked.reshape((count,) + shape + stacked.shape[3:]))
 
     #
     # Orbits
@@ -359,17 +435,14 @@ class PAdicFlow:
         res = self.residues
         K = self.precision
         level, axis = self._levels(x)
-        powers = jnp.asarray(res.powers)
-        x_axis = jnp.take_along_axis(x, axis[:, None], axis=1)[:, 0]
-        time = jnp.zeros(x.shape[0], dtype=jnp.int64)
+        x_axis = res.take(x, axis)
+        time = res.zeros((x.shape[0],))
         foot = z
         for j in range(math.ceil(math.log2(K)) + 2):
-            value = jnp.take_along_axis(foot, axis[:, None], axis=1)[:, 0]
-            slope = jnp.take_along_axis(
-                self._vector_field(foot), axis[:, None], axis=1
-            )[:, 0]
+            value = res.take(foot, axis)
+            slope = res.take(self._vector_field(foot), axis)
             step = res.divide(res.sub(value, x_axis), slope, level)
-            time = jnp.remainder(res.add(time, step), powers[K - level])
+            time = res.truncate(res.add(time, step), K - level)
             small = 2**j - 1
             if small >= self.table_digits:
                 foot = self._small_flow(res.neg(step), foot, small)
@@ -394,7 +467,7 @@ class PAdicFlow:
         """
         batch, (x, z) = self._flatten((x, True), (z, True))
         time, foot, _ = self._rectify(x, z)
-        return time.reshape(batch), self._unflatten(batch, foot)
+        return self._scalars(batch, time), self._unflatten(batch, foot)
 
     def orbit_time(self, x, z):
         """The time `t` with `phi_t(x) = z` (modulo `p^{K - k}`), and whether `z` lies
@@ -404,9 +477,9 @@ class PAdicFlow:
         batch, (x, z) = self._flatten((x, True), (z, True))
         time, foot, level = self._rectify(x, z)
         inside = (res.valuation(res.sub(z, x)) >= level[:, None]).all(axis=1)
-        on_orbit = inside & (foot == x).all(axis=1)
-        time = jnp.where(level >= self.precision, 0, time)
-        return time.reshape(batch), on_orbit.reshape(batch)
+        on_orbit = inside & res.equal(foot, x).all(axis=1)
+        time = res.where(level >= self.precision, jnp.zeros_like(time), time)
+        return self._scalars(batch, time), on_orbit.reshape(batch)
 
     def first_hitting_time(self, x, y, level: int):
         """The first integer time `n >= 0` with `phi_n(x)` in the ball
@@ -424,16 +497,16 @@ class PAdicFlow:
         close = (res.valuation(res.sub(y, x)) >= level).all(axis=1)
         inside = (res.valuation(res.sub(y, x)) >= k[:, None]).all(axis=1)
         hit = inside & (k < level) & (res.valuation(res.sub(foot, x)) >= level).all(1)
-        period = jnp.asarray(res.powers)[jnp.clip(level - k, 0, self.precision)]
-        first = jnp.where(hit, jnp.remainder(time, period), -1)
-        return jnp.where(close, 0, first).reshape(batch)
+        first = self._scalars(batch, res.truncate(time, jnp.clip(level - k, 0, None)))
+        first = self._select(hit.reshape(batch), first, -1)
+        return self._select(close.reshape(batch), 0, first)
 
     def return_time(self, x, level: int):
         """The first return time of `x` to `B(x, p^{-level})`, which is
         `p^{max(level - k, 0)}`.
         """
         k = self.orbit_level(x)
-        return jnp.asarray(self.residues.powers)[jnp.clip(level - k, 0, None)]
+        return self.residues.p_power(jnp.clip(level - k, 0, None))
 
     def orbit_average(self, values, x, level: int):
         """The time average `lim (1/N) sum_{n < N} F(phi_n(x))` of a function `F` that
@@ -448,12 +521,11 @@ class PAdicFlow:
         values = jnp.asarray(values)
         if values.shape != (size,) * self.dimension:
             raise ValueError(f"`values` must have shape {(size,) * self.dimension}.")
-        x = self.residues.asarray(x)
         k = int(self.orbit_level(x))
         period = self.p ** max(level - k, 0)
         times = jnp.arange(period, dtype=jnp.int64)
         points = self.flow(times, x)
-        cells = jnp.remainder(points, size)
+        cells = jnp.asarray(np.asarray(points % size).astype(np.int64))
         if self.dimension == 1:
             cells = cells[:, None]
         return values[tuple(cells.T)].mean()
@@ -558,25 +630,25 @@ class TimeDependentFlow:
         `t1 - t0` must be divisible by `q`.
         """
         res = self.autonomous.residues
+        digits = 2 if self.p == 2 else 1
         t0, t1 = res.asarray(t0), res.asarray(t1)
         elapsed = res.sub(t1, t0)
         try:
-            concrete = np.asarray(elapsed)
+            concrete = np.asarray(res.low(elapsed, digits))
         except Exception:
             concrete = None
-        if concrete is not None and (concrete % self.step).any():
+        if concrete is not None and concrete.any():
             raise ValueError(f"`t1 - t0` must be divisible by {self.step}.")
-        s = jnp.floor_divide(elapsed, self.step)
+        s = res.shift(elapsed, digits)
         x = res.asarray(x)
-        points = x[..., None] if self.dimension == 1 else x
-        batch = jnp.broadcast_shapes(elapsed.shape, points.shape[:-1])
+        points = jnp.expand_dims(x, x.ndim - res.extra) if self.dimension == 1 else x
+        batch = jnp.broadcast_shapes(res.shape(elapsed), res.shape(points)[:-1])
+        tail = (res.limbs,) if res.extra else ()
+        clock = jnp.expand_dims(jnp.broadcast_to(t0, batch + tail), len(batch))
         state = jnp.concatenate(
-            [
-                jnp.broadcast_to(t0, batch)[..., None],
-                jnp.broadcast_to(points, batch + (self.dimension,)),
-            ],
-            axis=-1,
+            [clock, jnp.broadcast_to(points, batch + (self.dimension,) + tail)],
+            axis=len(batch),
         )
-        s = jnp.broadcast_to(s, batch)
-        out = self.autonomous.flow(s, state, method=method)[..., 1:]
+        s = jnp.broadcast_to(s, batch + tail)
+        out = self.autonomous._apply(s, state, method=method)[..., 1:]
         return out[..., 0] if self.dimension == 1 else out

@@ -132,8 +132,11 @@ def degree(polys) -> int:
 
 
 def to_dense(polys: list[dict], d: int, deg: int) -> np.ndarray:
-    """Polynomials as an array of shape `(len(polys),) + (deg + 1,) * d`."""
-    out = np.zeros((len(polys),) + (deg + 1,) * d, dtype=np.int64)
+    """Polynomials as an array of shape `(len(polys),) + (deg + 1,) * d`, of Python
+    integers when a coefficient does not fit in `int64`.
+    """
+    big = any(c >= 2**63 for poly in polys for c in poly.values())
+    out = np.zeros((len(polys),) + (deg + 1,) * d, dtype=object if big else np.int64)
     for k, poly in enumerate(polys):
         for e, c in poly.items():
             out[(k,) + e] = c
@@ -151,10 +154,11 @@ def evaluate(residues: Residues, coefficients, x, index=None):
     point `b` uses row `index[b]`. The rows are gathered one coefficient at a time
     inside Horner's loop, so the per-point coefficients are never materialised.
     """
-    d = x.shape[-1]
+    d = x.shape[1]
     out = jnp.asarray(coefficients)
     for j in reversed(range(d)):
-        point = x[:, j].reshape((-1,) + (1,) * (out.ndim - 2))
+        rest = out.ndim - residues.extra - 2
+        point = x[:, j].reshape((-1,) + (1,) * rest + x.shape[2:])
         if index is not None:
             out = gather_horner(residues, out, index, point)
             index = None

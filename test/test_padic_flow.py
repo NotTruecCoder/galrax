@@ -11,6 +11,7 @@ from diffrax.padic_flow import (
     advection_diffusion,
     Equilibrium,
     KoopmanOperator,
+    Limbs,
     PAdicEvent,
     PAdicFlow,
     PAdicMap,
@@ -544,6 +545,87 @@ def test_double_precision_flows(p, K):
     assert np.array_equal(flow.flow(t, x, method="taylor"), flow.flow(t, x))
     single = PAdicFlow(p, 12, list(field))
     assert np.array_equal(np.asarray(flow.flow(t, x)) % p**12, single.flow(t, x))
+
+
+@pytest.mark.parametrize("p,K", [(3, 100), (2, 150), (101, 12), (3, 19)])
+def test_limb_arithmetic(p, K):
+    res = Limbs(p, K)
+    m = p**K
+    rng = np.random.default_rng(0)
+    a = [int(v) for v in rng.integers(0, 2**62, 300)]
+    a = [v * v * v % m for v in a] + [0, 1, m - 1, p ** (K - 1)]
+    b = [(v * 7 + 3) * v % m for v in a[::-1]]
+    A, B = (
+        res.asarray(np.array(a, dtype=object)),
+        res.asarray(np.array(b, dtype=object)),
+    )
+    assert res.decode(A).tolist() == a
+    assert res.decode(res.mul(A, B)).tolist() == [x * y % m for x, y in zip(a, b)]
+    assert res.decode(res.add(A, B)).tolist() == [(x + y) % m for x, y in zip(a, b)]
+    assert res.decode(res.sub(A, B)).tolist() == [(x - y) % m for x, y in zip(a, b)]
+    assert res.decode(res.neg(A)).tolist() == [-x % m for x in a]
+    k = rng.integers(0, K + 1, len(a))
+    assert res.decode(res.shift(A, k)).tolist() == [
+        x // p ** int(j) for x, j in zip(a, k)
+    ]
+    assert res.decode(res.truncate(A, k)).tolist() == [
+        x % p ** int(j) for x, j in zip(a, k)
+    ]
+    valuations = [next((j for j in range(K) if x % p ** (j + 1)), K) for x in a]
+    assert np.asarray(res.valuation(A)).tolist() == valuations
+    units = [x if x % p else x + 1 for x in a]
+    inverses = res.decode(res.unit_inverse(res.asarray(np.array(units, dtype=object))))
+    assert all(x * y % m == 1 for x, y in zip(units, inverses))
+    small = np.array([-5, 0, 7, 2**62], dtype=np.int64)
+    assert res.decode(res.asarray(small)).tolist() == [int(x) % m for x in small]
+
+
+@pytest.mark.parametrize("p,K", [(3, 60), (2, 100), (5, 40), (101, 12)])
+def test_many_digit_flows(p, K):
+    field = (0, 0, 4) if p == 2 else (0, 0, p)
+    flow = PAdicFlow(p, K, list(field))
+    assert isinstance(flow.residues, Limbs)
+    q, m = field[2], p**K
+    rng = np.random.default_rng(1)
+    x = [int(v) ** 3 % m for v in rng.integers(0, 2**62, 20)]
+    t = [int(v) ** 3 % m for v in rng.integers(0, 2**62, 20)]
+    X, T = np.array(x, dtype=object), np.array(t, dtype=object)
+    expected = [xi * pow((1 - q * ti * xi) % m, -1, m) % m for xi, ti in zip(x, t)]
+    z = flow.flow(T, X)
+    assert z.tolist() == expected
+    assert flow.flow(T, X, method="taylor").tolist() == expected
+    single = PAdicFlow(p, 6, list(field))
+    assert np.array_equal((z % p**6).astype(np.int64), single.flow(T % p**6, X % p**6))
+    time, on_orbit = flow.orbit_time(X, z)
+    level = np.asarray(flow.orbit_level(X))
+    assert on_orbit.all()
+    assert all((s - ti) % p ** (K - int(k)) == 0 for s, ti, k in zip(time, t, level))
+
+
+@pytest.mark.parametrize(
+    "p,K,field",
+    [
+        (3, 9, ((((0, 1), 3), ((2, 0), 3)), (((0, 0), 3), ((1, 1), -6)))),
+        (3, 6, ((((0, 1, 0), 3),), (((0, 0, 1), 3),), (((2, 0, 0), 3),))),
+    ],
+    ids=["plane", "space"],
+)
+def test_sparse_storage_matches_dense(p, K, field):
+    sparse = _flow(p, K, field, storage="sparse")
+    dense = _flow(p, K, field, storage="dense")
+    d = sparse.dimension
+    x = _random(p**K, 200, d)
+    t = _random(p**K, 200, seed=1)
+    z = dense.flow(t, x)
+    assert np.array_equal(sparse.flow(t, x), z)
+    assert np.array_equal(sparse.flow(t, x, method="taylor"), z)
+    assert np.array_equal(dense.flow(t, x, method="taylor"), z)
+    for got, want in zip(sparse.rectify(x, z), dense.rectify(x, z)):
+        assert np.array_equal(got, want)
+    assert sparse._table[0].size < dense._table[0].size
+    assert sparse.space_digits >= dense.space_digits
+    with pytest.raises(ValueError):
+        PAdicFlow(p, K, [dict(c) for c in field], storage="compressed")
 
 
 #

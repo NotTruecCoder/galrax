@@ -6,7 +6,7 @@ series in `(t, x)`, table-driven evaluation, Mahler interpolation of iterates,
 flow-box (rectifying) coordinates by Newton's method, hitting and return times, orbit
 averages, events, equilibria and linearisation, and Koopman operators with
 ultrametric diffusion. Discrete maps `x -> T(x)` are analysed through their cycle tree
-and minimal decomposition. Flows run on `int64` JAX arrays.
+and minimal decomposition. Flows run on `int64` JAX arrays, with any number of digits.
 """
 
 from ._padic_flow import (
@@ -17,6 +17,7 @@ from ._padic_flow import (
     Equilibrium as Equilibrium,
     EventSet as EventSet,
     KoopmanOperator as KoopmanOperator,
+    Limbs as Limbs,
     Linearization as Linearization,
     PAdicEvent as PAdicEvent,
     PAdicFlow as PAdicFlow,

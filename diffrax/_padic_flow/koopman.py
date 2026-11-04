@@ -36,7 +36,7 @@ class KoopmanOperator:
         points = np.indices((side,) * d).reshape(d, -1).T
 
         def index(images):
-            cells = np.asarray(jnp.remainder(images, side)).reshape(-1, d)
+            cells = np.asarray(images % side).astype(np.int64).reshape(-1, d)
             return np.ravel_multi_index(tuple(cells.T), (side,) * d)
 
         images = flow.flow(self.time, points if d > 1 else points[:, 0])
@@ -54,7 +54,7 @@ class KoopmanOperator:
         offset = np.concatenate([[0], np.cumsum(lengths)[:-1]])
         steps = np.arange(self.size) - np.repeat(offset, lengths)
         start = points[representatives[owner]]
-        times = (steps.astype(object) * self.time % flow.modulus).astype(np.int64)
+        times = steps.astype(object) * self.time % flow.modulus
         visited = index(flow.flow(times, start if d > 1 else start[:, 0]))
 
         self.groups = []

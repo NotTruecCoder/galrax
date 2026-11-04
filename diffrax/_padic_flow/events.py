@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 
-import jax.numpy as jnp
 import numpy as np
 
 from .arithmetic import valuation
@@ -101,8 +100,9 @@ def event_times(flow, event: PAdicEvent, x) -> tuple[list[EventSet], tuple]:
         raise ValueError(f"`depth` must lie in 1, ..., {K}.")
     coefficients = event_series(flow, event)
     batch, (points,) = flow._flatten((x, True))
+    res = flow.residues
     values = np.asarray(
-        evaluate(flow.residues, jnp.asarray(coefficients)[None], points)
+        res.decode(evaluate(res, res.asarray(coefficients)[None], points))
     )
     out = []
     for row in values:

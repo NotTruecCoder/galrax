@@ -67,12 +67,17 @@ class Residues:
     - `p`: a prime.
     - `precision`: `K`, the number of digits.
     - `reduction`: `"barrett"`, `"barrett32"`, `"remainder"` or `"double"`. Defaults to
-        `"barrett"` on CPU and `"remainder"` on GPU (the faster of the two in our
-        measurements) when products fit in `int64`, and to `"double"` otherwise.
-        `"barrett32"` estimates the quotient in `float32` twice, avoiding `float64`
-        entirely; on a laptop GPU it was slower than `"barrett"`, because the cost
-        there is in the 64-bit integer products, not in `float64`.
+        `"remainder"` when products fit in `int64`, and to `"double"` otherwise. Which
+        single-word reduction is fastest depends on the platform: in our measurements
+        the remainder won on GPU and on a Linux CPU, Barrett on a Windows CPU build.
+        `"barrett32"` estimates the quotient in `float32` twice, avoiding `float64`;
+        it did not help, because the cost is in the 64-bit integer products.
+
+    Arrays of residues have the shape of the values they hold; `Limbs` handles more
+    digits than fit in one `int64`.
     """
+
+    extra = 0
 
     def __init__(self, p: int, precision: int, reduction: str | None = None):
         p, precision = int(p), int(precision)
@@ -87,12 +92,7 @@ class Residues:
                 f"got precision = {precision}."
             )
         if reduction is None:
-            if precision > single:
-                reduction = "double"
-            elif jax.default_backend() == "cpu":
-                reduction = "barrett"
-            else:
-                reduction = "remainder"
+            reduction = "double" if precision > single else "remainder"
         if reduction not in ("barrett", "barrett32", "remainder", "double"):
             raise ValueError(
                 "`reduction` must be 'barrett', 'barrett32', 'remainder' or 'double'."
@@ -127,10 +127,52 @@ class Residues:
         """`x` reduced to `[0, p^K)` as an `int64` array. Accepts any integers,
         negative ones included.
         """
+        if not isinstance(x, jax.Array) and np.asarray(x).dtype == object:
+            x = (np.asarray(x) % self.modulus).astype(np.int64)
         x = jnp.asarray(x)
         if not jnp.issubdtype(x.dtype, jnp.integer):
             raise ValueError("p-adic integers must be given as integer arrays.")
         return jnp.remainder(x.astype(jnp.int64), self.modulus)
+
+    def decode(self, x):
+        """The values held by `x`, as integers in `[0, p^K)`."""
+        return x
+
+    def constant(self, c: int):
+        return jnp.asarray(int(c) % self.modulus, dtype=jnp.int64)
+
+    def zeros(self, shape):
+        return jnp.zeros(shape, dtype=jnp.int64)
+
+    def shape(self, x):
+        """The shape of the values held by `x`."""
+        return jnp.shape(x)
+
+    def low(self, x, k: int):
+        """`x mod p^k` as plain `int64` values, for `p^k < 2^31`."""
+        return jnp.remainder(x, self.p**k)
+
+    def shift(self, x, k):
+        """`x // p^k`, for `k` an integer or an array of them."""
+        return jnp.floor_divide(x, jnp.asarray(self.powers)[k])
+
+    def truncate(self, x, k):
+        """`x mod p^k`, for `k` an integer or an array of them."""
+        return jnp.remainder(x, jnp.asarray(self.powers)[k])
+
+    def p_power(self, e):
+        """`p^e` as plain values, for `0 <= e <= K`."""
+        return jnp.asarray(self.powers)[e]
+
+    def equal(self, a, b):
+        return a == b
+
+    def where(self, condition, a, b):
+        return jnp.where(condition, a, b)
+
+    def take(self, x, index):
+        """`x[b, index[b]]` for `x` holding values of shape `(batch, d)`."""
+        return jnp.take_along_axis(x, index[:, None], axis=1)[:, 0]
 
     def add(self, a, b):
         a, b = jnp.broadcast_arrays(a, b)
@@ -180,9 +222,10 @@ class Residues:
         """`1/u` for units `u` (not divisible by `p`), by Newton's iteration
         `z <- z (2 - u z)`, which doubles the number of correct digits.
         """
-        z = jnp.asarray(self._inverses)[jnp.remainder(u, self.p)]
+        z = self.asarray(jnp.asarray(self._inverses)[self.low(u, 1)])
+        two = self.constant(2)
         for _ in range(max(1, math.ceil(math.log2(self.precision)))):
-            z = self.mul(z, self.sub(2, self.mul(u, z)))
+            z = self.mul(z, self.sub(two, self.mul(u, z)))
         return z
 
     def divide(self, a, b, v):
@@ -190,13 +233,12 @@ class Residues:
         quotient is only defined modulo `p^{K - v}`; it is returned in
         `[0, p^{K - v})`.
         """
-        scale = jnp.asarray(self.powers)[v]
-        unit = jnp.floor_divide(b, scale)
-        quotient = self.mul(jnp.floor_divide(a, scale), self.unit_inverse(unit))
-        return jnp.remainder(quotient, jnp.asarray(self.powers)[self.precision - v])
+        unit = self.shift(b, v)
+        quotient = self.mul(self.shift(a, v), self.unit_inverse(unit))
+        return self.truncate(quotient, self.precision - v)
 
     def power(self, a, e: int):
-        result = jnp.ones_like(a)
+        result = jnp.broadcast_to(self.constant(1), jnp.shape(a))
         base = a
         while e:
             if e & 1:
@@ -206,9 +248,205 @@ class Residues:
         return result
 
 
+def limb_width(p: int, precision: int) -> int:
+    """The largest number of digits `b` per limb for which a truncated product of
+    `ceil(K / b)` limbs, carries included, fits in `int64`.
+    """
+    best = 1
+    for b in range(1, precision + 1):
+        count = -(-precision // b)
+        if count * (p**b - 1) ** 2 + 2 * count * p**b >= 2**63:
+            break
+        best = b
+    return best
+
+
+class Limbs(Residues):
+    """Exact arithmetic in `Z/p^K` for any number of digits, on `int64` JAX arrays
+    with one extra trailing axis.
+
+    An element is `sum_i a_i B^i` with `B = p^b` and `L = ceil(K / b)` limbs
+    `0 <= a_i < B`, stored along the last axis. Since `B^L = 0` modulo `p^K`, a
+    product needs only the `L (L + 1) / 2` limb products `a_i b_j` with `i + j < L`,
+    followed by one pass of carries; `b` is the largest width for which these sums fit
+    in `int64`. Values enter as `int64` or Python integers through `asarray` and leave
+    as Python integers through `decode`.
+
+    **Arguments:**
+
+    - `p`: a prime.
+    - `precision`: `K`, any number of digits.
+    """
+
+    extra = 1
+
+    def __init__(self, p: int, precision: int):
+        p, precision = int(p), int(precision)
+        if not is_prime(p):
+            raise ValueError("`p` must be a prime.")
+        if precision < 1:
+            raise ValueError("`precision` must be at least 1.")
+        if jnp.asarray(0, dtype=jnp.int64).dtype != jnp.int64:
+            raise RuntimeError(
+                "p-adic arithmetic needs 64-bit integers: enable them with "
+                "`jax.config.update('jax_enable_x64', True)`."
+            )
+        self.p = p
+        self.precision = precision
+        self.modulus = p**precision
+        self.reduction = "limbs"
+        self.width = limb_width(p, precision)
+        self.limbs = -(-precision // self.width)
+        self.base = p**self.width
+        self.top = p ** (precision - self.width * (self.limbs - 1))
+        self.powers = np.array([p**k for k in range(self.width + 1)], dtype=np.int64)
+        self._inverses = np.array(
+            [pow(a, -1, p) if a % p else 0 for a in range(p)], dtype=np.int64
+        )
+
+    def __repr__(self) -> str:
+        return f"Limbs(p={self.p}, precision={self.precision}, limbs={self.limbs})"
+
+    def _carry(self, sums):
+        out, carry = [], 0
+        for k, value in enumerate(sums):
+            value = value + carry
+            base = self.top if k == self.limbs - 1 else self.base
+            out.append(jnp.remainder(value, base))
+            carry = jnp.floor_divide(value, base)
+        return jnp.stack(out, axis=-1)
+
+    def _encode(self, x) -> list[int]:
+        x = int(x) % self.modulus
+        return [x // self.base**k % self.base for k in range(self.limbs)]
+
+    def asarray(self, x):
+        if not isinstance(x, jax.Array) and np.asarray(x).dtype == object:
+            array = np.asarray(x)
+            values = [self._encode(v) for v in array.ravel()]
+            out = np.array(values, dtype=np.int64).reshape(array.shape + (self.limbs,))
+            return jnp.asarray(out)
+        x = jnp.asarray(x)
+        if not jnp.issubdtype(x.dtype, jnp.integer):
+            raise ValueError("p-adic integers must be given as integer arrays.")
+        rest = x.astype(jnp.int64)
+        out = []
+        for k in range(self.limbs):
+            base = self.top if k == self.limbs - 1 else self.base
+            out.append(jnp.remainder(rest, base))
+            rest = jnp.floor_divide(rest, self.base)
+        return jnp.stack(out, axis=-1)
+
+    def decode(self, x):
+        x = np.asarray(x).astype(object)
+        total = np.zeros(x.shape[:-1], dtype=object)
+        for k in reversed(range(self.limbs)):
+            total = total * self.base + x[..., k]
+        return total
+
+    def constant(self, c: int):
+        return jnp.asarray(self._encode(c), dtype=jnp.int64)
+
+    def zeros(self, shape):
+        return jnp.zeros(tuple(shape) + (self.limbs,), dtype=jnp.int64)
+
+    def shape(self, x):
+        return jnp.shape(x)[:-1]
+
+    def _operands(self, a, b):
+        a = self.constant(a) if isinstance(a, int) else a
+        b = self.constant(b) if isinstance(b, int) else b
+        return jnp.broadcast_arrays(a, b)
+
+    def add(self, a, b):
+        a, b = self._operands(a, b)
+        total = a + b
+        return self._carry([total[..., k] for k in range(self.limbs)])
+
+    def sub(self, a, b):
+        a, b = self._operands(a, b)
+        difference = a - b
+        return self._carry([difference[..., k] for k in range(self.limbs)])
+
+    def neg(self, a):
+        return self.sub(jnp.zeros_like(a), a)
+
+    def mul(self, a, b):
+        a, b = self._operands(a, b)
+        sums = []
+        for k in range(self.limbs):
+            total = a[..., 0] * b[..., k]
+            for i in range(1, k + 1):
+                total = total + a[..., i] * b[..., k - i]
+            sums.append(total)
+        return self._carry(sums)
+
+    def low(self, x, k: int):
+        if k > self.width:
+            raise ValueError(f"At most {self.width} low digits can be read at once.")
+        return jnp.remainder(x[..., 0], self.p**k)
+
+    def _per_limb(self, x, k):
+        """`x` and `k` broadcast to a common shape `(..., L)`, with the limb index."""
+        k = jnp.asarray(k)[..., None]
+        shape = jnp.broadcast_shapes(x.shape, k.shape[:-1] + (self.limbs,))
+        limb = jnp.broadcast_to(jnp.arange(self.limbs), shape)
+        return jnp.broadcast_to(x, shape), jnp.broadcast_to(k, shape), limb
+
+    def shift(self, x, k):
+        x, k, limb = self._per_limb(x, k)
+        index = limb + k // self.width
+        part = k % self.width
+        moved = jnp.take_along_axis(x, jnp.clip(index, 0, self.limbs - 1), axis=-1)
+        moved = jnp.where(index < self.limbs, moved, 0)
+        powers = jnp.asarray(self.powers)
+        upper = jnp.concatenate([moved[..., 1:], jnp.zeros_like(moved[..., :1])], -1)
+        carry = jnp.remainder(upper, powers[part]) * powers[self.width - part]
+        return jnp.floor_divide(moved, powers[part]) + carry
+
+    def truncate(self, x, k):
+        x, k, limb = self._per_limb(x, k)
+        digits = jnp.clip(k - self.width * limb, 0, self.width)
+        return jnp.remainder(x, jnp.asarray(self.powers)[digits])
+
+    def p_power(self, e):
+        return np.vectorize(lambda k: self.p ** int(k), otypes=[object])(np.asarray(e))
+
+    def equal(self, a, b):
+        return (a == b).all(axis=-1)
+
+    def where(self, condition, a, b):
+        return jnp.where(jnp.asarray(condition)[..., None], a, b)
+
+    def take(self, x, index):
+        return jnp.take_along_axis(x, index[:, None, None], axis=1)[:, 0]
+
+    def valuation(self, x):
+        digits = jnp.zeros(x.shape, dtype=jnp.int64)
+        for j in range(1, self.width + 1):
+            digits = digits + (jnp.remainder(x, self.p**j) == 0).astype(jnp.int64)
+        v = jnp.full(x.shape[:-1], self.precision, dtype=jnp.int64)
+        for k in reversed(range(self.limbs)):
+            v = jnp.where(x[..., k] != 0, k * self.width + digits[..., k], v)
+        return v
+
+
+def make_residues(p: int, precision: int, reduction: str | None = None) -> Residues:
+    """`Residues` while residues fit in one `int64`, `Limbs` beyond that or for
+    `reduction="limbs"`.
+    """
+    if reduction == "limbs" or (
+        reduction is None and int(precision) > double_word_precision(int(p))
+    ):
+        return Limbs(p, precision)
+    return Residues(p, precision, reduction)
+
+
 def scan_horner(residues: Residues, coefficients, x):
-    """`sum_i c[..., i] x^i` along the last axis of `coefficients`, by Horner's rule."""
-    xs = jnp.moveaxis(coefficients, -1, 0)[::-1]
+    """`sum_i c[..., i] x^i` along the last value axis of `coefficients`, by Horner's
+    rule.
+    """
+    xs = jnp.moveaxis(coefficients, -1 - residues.extra, 0)[::-1]
 
     def step(acc, c):
         return residues.add(residues.mul(acc, x), c), None
@@ -223,7 +461,7 @@ def gather_horner(residues: Residues, table, index, x):
     time inside Horner's loop. `table` has shape `(rows, *rest, deg + 1)`, `index`
     and `x` broadcast to the batch; returns `(batch, *rest)`.
     """
-    xs = jnp.moveaxis(table, -1, 0)[::-1]
+    xs = jnp.moveaxis(table, -1 - residues.extra, 0)[::-1]
 
     def step(acc, c):
         return residues.add(residues.mul(acc, x), c[index]), None
@@ -231,3 +469,43 @@ def gather_horner(residues: Residues, table, index, x):
     shape = jnp.broadcast_shapes((index.shape[0],) + xs.shape[2:], jnp.shape(x))
     out, _ = jax.lax.scan(step, jnp.zeros(shape, jnp.int64), xs)
     return out
+
+
+def simplex(d: int, deg: int) -> list[tuple[int, ...]]:
+    """The exponents `e` in `d` variables with `|e| <= deg`, in the order in which
+    `simplex_horner` reads them.
+    """
+    if d == 0:
+        return [()]
+    return [(k,) + rest for k in range(deg, -1, -1) for rest in simplex(d - 1, deg - k)]
+
+
+def simplex_horner(residues: Residues, coefficients, x, deg: int, index=None):
+    """Polynomials of total degree at most `deg` in `d` variables, stored sparsely.
+
+    `coefficients` has shape `(rows, *rest, M)` with one entry per exponent of
+    `simplex(d, deg)`; `x` has value shape `(batch, d)`. Horner's rule is nested over
+    the simplex of exponents, one multiplication per stored coefficient, instead of
+    `(deg + 1)^d` for dense storage. With `index`, point `b` uses row `index[b]`;
+    otherwise `rows` is `1` or `batch`. Returns `(batch, *rest)`.
+    """
+    d = x.shape[1]
+    extra = residues.extra
+    columns = jnp.moveaxis(coefficients, -1 - extra, 0)
+    rest = columns.ndim - 2 - extra
+    points = [x[:, j].reshape((-1,) + (1,) * rest + x.shape[2:]) for j in range(d)]
+    position = iter(range(columns.shape[0]))
+
+    def leaf():
+        column = columns[next(position)]
+        return column[index] if index is not None else column
+
+    def nest(j, budget):
+        if j == d:
+            return leaf()
+        acc = nest(j + 1, 0)
+        for k in range(budget - 1, -1, -1):
+            acc = residues.add(residues.mul(acc, points[j]), nest(j + 1, budget - k))
+        return acc
+
+    return nest(0, deg)
