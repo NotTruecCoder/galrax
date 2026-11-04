@@ -19,6 +19,7 @@ from ._padic_flow import (
     KoopmanOperator as KoopmanOperator,
     Limbs as Limbs,
     Linearization as Linearization,
+    NormalForm as NormalForm,
     PAdicEvent as PAdicEvent,
     PAdicFlow as PAdicFlow,
     PAdicMap as PAdicMap,

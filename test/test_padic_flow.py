@@ -13,6 +13,7 @@ from diffrax.padic_flow import (
     Equilibrium,
     KoopmanOperator,
     Limbs,
+    NormalForm,
     PAdicEvent,
     PAdicFlow,
     PAdicMap,
@@ -929,8 +930,145 @@ def test_linearization_validation():
     with pytest.raises(ValueError, match="degenerate"):
         flow.linearization(0)
     plane = _flow(5, 6, ((((2, 0), 5), ((0, 1), -5)), (((0, 1), 5), ((0, 0), -5))))
-    with pytest.raises(ValueError, match="d = 1"):
-        plane.linearization(Equilibrium((1, 1), 5, True))
+    form = plane.linearization(Equilibrium((1, 1), 5, True))
+    assert isinstance(form, NormalForm) and form.equilibrium == (1, 1)
+
+
+X, Y = PowerSeries.variable(0, 2), PowerSeries.variable(1, 2)
+NORMAL_FORMS = [
+    ("line", 3, 8, [0, 3, 0, 3], (0,), True),
+    (
+        "real",
+        3,
+        8,
+        [{(1, 0): 3, (0, 1): 21, (2, 0): 3}, {(1, 0): 3, (0, 1): 3, (1, 1): 3}],
+        (0, 0),
+        True,
+    ),
+    (
+        "complex",
+        3,
+        8,
+        [{(1, 0): 3, (0, 1): 6, (0, 2): 3}, {(1, 0): 3, (0, 1): 3, (2, 0): 3}],
+        (0, 0),
+        True,
+    ),
+    (
+        "jordan",
+        3,
+        8,
+        [{(1, 0): 3, (0, 1): 3, (0, 2): 3}, {(0, 1): 3, (2, 0): 3}],
+        (0, 0),
+        None,
+    ),
+    (
+        "resonant",
+        3,
+        8,
+        [{(1, 0): 3, (0, 2): 3}, {(0, 1): 6, (2, 0): 3, (1, 1): 3}],
+        (0, 0),
+        False,
+    ),
+    ("zero", 3, 8, [{(1, 1): 3}, {(0, 1): 3, (2, 0): 3}], (0, 0), False),
+    (
+        "space",
+        3,
+        6,
+        [
+            {(1, 0, 0): 3, (0, 1, 0): 6, (0, 0, 2): 3},
+            {(1, 0, 0): 3, (0, 1, 0): 3},
+            {(0, 0, 1): 6, (2, 0, 0): 3},
+        ],
+        (0, 0, 0),
+        False,
+    ),
+    ("two", 2, 10, [{(1, 0): 4, (0, 2): 4}, {(0, 1): 12, (3, 0): 4}], (0, 0), False),
+    (
+        "analytic",
+        3,
+        8,
+        [3 * X + 6 * Y + 3 * (PowerSeries.exp(3, 1, 2) - 1 - 3 * Y), 3 * X + 3 * Y],
+        (0, 0),
+        True,
+    ),
+    ("shifted", 5, 6, [{(2, 0): 5, (0, 1): -5}, {(0, 1): 5, (0, 0): -5}], (1, 1), None),
+]
+
+
+def _conjugates(flow, form, count=10, seed=0):
+    p, K, d = flow.p, flow.precision, flow.dimension
+    r = form.radius
+    rng = np.random.default_rng(seed)
+    centre = np.array(form.equilibrium, dtype=object)
+    x = (
+        centre + p**r * rng.integers(0, p ** (K - r), (count, d)).astype(object)
+    ) % p**K
+    t = rng.integers(0, p**K, count)
+    points = x[:, 0] if d == 1 else x
+    got = np.asarray(form.flow_map(t, points)).astype(object)
+    want = np.asarray(flow.flow(t, points)).astype(object)
+    back = np.asarray(form.inverse(form.forward(points))).astype(object)
+    return np.array_equal(got, want) and np.array_equal(back, points)
+
+
+@pytest.mark.parametrize(
+    "name,p,K,field,point,linear", NORMAL_FORMS, ids=[case[0] for case in NORMAL_FORMS]
+)
+def test_normal_form_conjugates_the_flow(name, p, K, field, point, linear):
+    flow = PAdicFlow(p, K, field)
+    form = flow.normal_form(point)
+    assert _conjugates(flow, form)
+    if linear is not None:
+        assert form.linearizable == linear
+    needed = 2 if p == 2 else 1
+    for component in form.normal_form:
+        assert all(c % p**needed == 0 for c in component.values())
+    for component in form.transformation:
+        assert all(c % p == 0 for e, c in component.items() if sum(e) >= 2)
+    keys = [set(component) for component in form.resonant_terms]
+    if name == "resonant":
+        assert keys == [set(), {(2, 0)}]
+    if name == "two":
+        assert keys == [set(), {(3, 0)}]
+    if name == "zero":
+        assert keys[0] and all(e[1] == 0 for e in keys[0])
+        assert keys[1] and all(e[1] == 1 for e in keys[1])
+    if name == "space":
+        assert not keys[0] and not keys[1] and keys[2]
+        assert all(e[2] == 0 and sum(e) == 2 for e in keys[2])
+        assert 2 in form.divisors and max(form.divisors[2]) >= K
+
+
+def test_normal_form_thresholds_and_linear_part():
+    jordan = PAdicFlow(3, 8, NORMAL_FORMS[3][3])
+    kept = jordan.normal_form((0, 0))
+    removed = jordan.normal_form((0, 0), resonance_digits=16)
+    assert not kept.linearizable and removed.linearizable
+    assert removed.radius >= kept.radius
+    assert _conjugates(jordan, removed)
+    real = PAdicFlow(3, 8, NORMAL_FORMS[1][3])
+    cautious = real.normal_form((0, 0), resonance_digits=0)
+    assert not cautious.linearizable and _conjugates(real, cautious)
+    complex_pair = PAdicFlow(3, 8, NORMAL_FORMS[2][3])
+    form = complex_pair.normal_form((0, 0))
+    z = _random(3**8, 6, 2)
+    for t in (1, 7, 3**8 - 2):
+        matrix = np.array(form.exponential(t), dtype=object)
+        linear = (z.astype(object) @ matrix.T) % 3**8
+        moved = np.asarray(form._normal_flow.flow(t, z)).astype(object)
+        assert np.array_equal(linear, moved)
+
+
+def test_normal_form_validation():
+    flow = PAdicFlow(3, 8, NORMAL_FORMS[1][3])
+    with pytest.raises(ValueError, match="equilibrium"):
+        flow.normal_form((1, 2))
+    with pytest.raises(ValueError, match="point of"):
+        flow.normal_form((0, 0, 0))
+    form = flow.normal_form((0, 0))
+    with pytest.raises(ValueError, match="outside the domain"):
+        form.forward(np.array([[1, 0]]))
+    assert "linearizable" in repr(form)
 
 
 #

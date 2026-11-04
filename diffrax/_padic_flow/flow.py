@@ -14,6 +14,7 @@ from .arithmetic import (
 )
 from .equilibria import equilibria, Equilibrium, jacobian, Linearization
 from .events import event_times, PAdicEvent
+from .normal_form import NormalForm
 from .polynomial import (
     degree,
     evaluate,
@@ -108,6 +109,7 @@ class PAdicFlow:
         residues = make_residues(p, precision, reduction)
         p, K = residues.p, residues.precision
         given = field
+        self._source = given
         field = parse_field(given, p, digits=K)
         d = len(field)
         rate = field_valuation(field, p, cap=K)
@@ -695,11 +697,20 @@ class PAdicFlow:
             raise ValueError(f"`x` must be a single point of Z_p^{self.dimension}.")
         return np.array(jacobian(self, point.tolist()), dtype=np.int64)
 
-    def linearization(self, equilibrium, level: int | None = None) -> Linearization:
-        """Linearising coordinates around a simple equilibrium (`d = 1`); see
-        `Linearization`.
+    def linearization(self, equilibrium, level: int | None = None):
+        """Linearising coordinates around an equilibrium: a `Linearization` for
+        `d = 1`, and for `d > 1` the `NormalForm`, which linearises whenever there is
+        no resonance and keeps the resonant terms otherwise.
         """
+        if self.dimension > 1:
+            return NormalForm(self, equilibrium)
         return Linearization(self, equilibrium, level)
+
+    def normal_form(self, equilibrium, **kwargs) -> NormalForm:
+        """The Poincare--Dulac normal form around an equilibrium, in any dimension;
+        see `NormalForm`.
+        """
+        return NormalForm(self, equilibrium, **kwargs)
 
 
 class TimeDependentFlow:
