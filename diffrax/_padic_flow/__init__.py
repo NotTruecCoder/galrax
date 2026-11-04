@@ -7,5 +7,10 @@ from .koopman import (
     KoopmanOperator as KoopmanOperator,
 )
 from .maps import Component as Component, Cycle as Cycle, PAdicMap as PAdicMap
+from .plot import (
+    plot_advection_diffusion as plot_advection_diffusion,
+    plot_phase_portrait as plot_phase_portrait,
+    plot_trajectory as plot_trajectory,
+)
 from .roots import Ball as Ball
 from .series import PowerSeries as PowerSeries

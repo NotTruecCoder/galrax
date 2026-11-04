@@ -224,6 +224,23 @@ In two and three dimensions most of the gain is sparse storage: with the same ta
 
 The full Lie series (`method="taylor"`) runs at 2–60 M/s on the same GPU. On the laptop's CPU (batch $10^5$) the same cases run at 0.7–5.8 M/s for `flow`, 2.3–3.3 times faster than without space reduction, so the GPU is 35–70 times faster. The plain `int64` remainder was the fastest reduction on the GPU and on the CPU under Linux, and is the default; Barrett reduction was faster only with a native Windows build of JAX, and a `float32` quotient estimate (`"barrett32"`) does not help. Tables of 0.5–10 MB are the fastest; larger ones fall out of cache, which is why `table_size` defaults to $2^{20}$ entries.
 
+## Pictures of p-adic dynamics
+
+$\mathbb{Z}_p$ is drawn in two ways. The **Monna map** $\sum a_k p^k \mapsto \sum a_k p^{-k-1}$ sends it onto $[0, 1]$, with balls becoming intervals. The **fractal embedding** $\sum a_k p^k \mapsto \sum \omega^{a_k} \rho^k$, with $\omega = e^{2\pi i/p}$, sends it into the plane, with balls becoming nested clusters (a Sierpinski triangle for $p = 3$). `examples/padic_figures.py` draws all of the figures below.
+
+| | |
+|---|---|
+| ![](imgs/padic/trajectory_monna.png) | ![](imgs/padic/trajectory_fractal.png) |
+| The graph of $t \mapsto \varphi_t(x)$ for $dx/dt = 3 - 3x + 6x^3$, both axes in Monna coordinates. The orbit of $0$ fills a band of height $1/3$, and that of $2$ a band of height $1/9$: $t \mapsto \varphi_t(x)$ is a similarity of ratio $\lvert f(x) \rvert_3$. | The orbit of $2$ on the fractal picture of $\mathbb{Z}/3^6$, coloured by time: a whole sub-triangle, that is, a ball. |
+| ![](imgs/padic/phase_monna.png) | ![](imgs/padic/phase_fractal.png) |
+| The phase portrait of $dx/dt = 3y$, $dy/dt = -3x + 3x^2$ on $\mathbb{Z}_3^2$. Each point is coloured by the leaf of the flow-box foliation through it, so orbits are the sets of one colour; the equilibria $(0, 0)$ and $(1, 0)$ are black. | The same on the fractal picture of $\mathbb{Z}_3^2$. |
+| ![](imgs/padic/advection_monna.png) | ![](imgs/padic/advection_fractal.png) |
+| $du/dt = -D^{1/2} u + 2(U - I) u$ from the indicator of a small ball: the jumps along the flow move the mass across its orbit ball, and diffusion spreads it over $\mathbb{Z}_3$ (logarithmic colour scale). | The same at four times. |
+| ![](imgs/padic/kozyrev_monna.png) | ![](imgs/padic/kozyrev_fractal.png) |
+| The Kozyrev wavelets $\psi_{m,0,1}$, one per level, as step functions on $[0, 1]$. | The same, coloured by phase; each lives on a ball of radius $3^{-m}$. |
+
+`plot_phase_portrait(flow, level, colour="speed")` colours by $v_p(f(x))$ instead, the scale of the orbit through $x$.
+
 ## API
 
 The following live in `diffrax.group_algebra`.
@@ -248,6 +265,7 @@ The following live in `diffrax.ultrametric`.
 |---|---|
 | `PAdicIntegers(p, n)` | $\mathbb{Z}_p$ known to $n$ digits: digits, valuations, $p$-adic norms and distances, balls, Haar integrals, rationals as $p$-adic integers. |
 | `UltrametricOperator` | $L$ from its rates $w(p^{-k})$ and absorption $a$; `vladimirov(integers, alpha)`, `from_function`. Applies in $O(n p^n)$, exposes the kernel and the eigenvalues, evolves exactly with `evolve`, and builds a `GroupODE` with `problem`. |
+| `monna`, `fractal_embedding`, `plot_kozyrev_wavelets` | $\mathbb{Z}_p$ on the line and in the plane, and pictures of the wavelets (needs matplotlib). |
 | `KozyrevTransform` | The Kozyrev wavelet expansion: `forward`, `inverse`, `basis`, `spectrum` of radial kernels; usable as the `transform` of `solve_group_ode`. |
 
 The following live in `diffrax.padic_flow`.
@@ -261,6 +279,7 @@ The following live in `diffrax.padic_flow`.
 | `PAdicMap(p, map)`, `Cycle`, `Component` | Discrete maps: `cycle_tree`, `cycles(level)`, `minimal_decomposition`, `is_minimal`, `is_bijective`. |
 | `KoopmanOperator(flow, level, time=1)` | $u \mapsto u \circ \varphi_\tau$ on $(\mathbb{Z}/p^n)^d$: its cycles, and `evolve_jumps`, which computes $e^{t\kappa(U - I)}$ by an FFT along each cycle. |
 | `advection_diffusion(koopman, operator, u0, t, rate)` | The exact solution of $du/dt = Lu + \kappa(U - I)u$, with $L$ an `UltrametricOperator`. |
+| `plot_trajectory`, `plot_phase_portrait`, `plot_advection_diffusion` | Pictures of orbits, phase portraits and advection–diffusion, in Monna coordinates or on the fractal picture (needs matplotlib). |
 | `Residues(p, precision, reduction)` | Arithmetic in $\mathbb{Z}/p^K$ on `int64` arrays: products reduced by `"barrett"`, `"barrett32"`, `"remainder"` or `"double"` (two-word); valuations, unit inverses by Newton's method, exact division. The default is the plain remainder. |
 | `PowerSeries(coefficient, bound, dimension)` | An analytic field component; `exp`, `log1p`, `geometric`, `polynomial`, `variable`, sums and products. |
 | `Limbs(p, precision)` | The same for any number of digits, with residues stored as `int64` limbs along a trailing axis; `decode` returns Python integers. |
