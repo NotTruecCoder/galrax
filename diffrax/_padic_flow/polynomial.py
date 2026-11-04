@@ -159,11 +159,12 @@ def to_dense(polys: list[dict], d: int, deg: int) -> np.ndarray:
     return out
 
 
-def to_sparse(polys: list[dict], d: int, deg: int) -> np.ndarray:
-    """Polynomials of total degree at most `deg` as an array of shape
-    `(len(polys), M)`, one entry per exponent of `simplex(d, deg)`.
+def to_sparse(polys: list[dict], d: int, deg: int, caps=None) -> np.ndarray:
+    """Polynomials of total degree at most `deg` and degree at most `caps[j]` in
+    `x_j` as an array of shape `(len(polys), M)`, one entry per exponent of
+    `simplex(d, deg, caps)`.
     """
-    position = {e: i for i, e in enumerate(simplex(d, deg))}
+    position = {e: i for i, e in enumerate(simplex(d, deg, caps))}
     big = any(c >= 2**63 for poly in polys for c in poly.values())
     out = np.zeros((len(polys), len(position)), dtype=object if big else np.int64)
     for k, poly in enumerate(polys):

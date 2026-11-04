@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import scipy.linalg
+from diffrax._padic_flow.arithmetic import simplex, simplex_horner, simplex_size
 from diffrax.padic_flow import (
     advection_diffusion,
     Equilibrium,
@@ -624,7 +625,6 @@ def test_sparse_storage_matches_dense(p, K, field):
     for got, want in zip(sparse.rectify(x, z), dense.rectify(x, z)):
         assert np.array_equal(got, want)
     assert sparse._table[0].size < dense._table[0].size
-    assert sparse.space_digits >= dense.space_digits
     with pytest.raises(ValueError):
         PAdicFlow(p, K, [dict(c) for c in field], storage="compressed")
 
@@ -632,12 +632,80 @@ def test_sparse_storage_matches_dense(p, K, field):
 def test_sparse_flow_in_four_dimensions():
     field = [{(0, 1, 0, 0): 3}, {(0, 0, 1, 0): 3}, {(0, 0, 0, 1): 3}, {(2, 0, 0, 0): 3}]
     flow = PAdicFlow(3, 5, field)
-    assert flow.storage == "sparse" and flow.space_digits >= 1
+    assert flow.storage == "sparse" and sum(flow.space_digits) >= 1
     x = _random(3**5, 300, 4)
     t = _random(3**5, 300, seed=1)
     z = flow.flow(t, x)
     assert np.array_equal(flow.flow(t, x, method="taylor"), z)
     assert np.array_equal(flow.flow(-t, z), x)
+
+
+def test_centres_per_coordinate():
+    plane = [{(0, 1): 3, (2, 0): 3}, {(0, 0): 3, (1, 1): -6}]
+    reference = PAdicFlow(3, 9, plane, space_digits=0)
+    x = _random(3**9, 300, 2)
+    t = _random(3**9, 300, seed=1)
+    expected = reference.flow(t, x)
+    for kwargs in [
+        {"space_digits": (2, 1)},
+        {"space_digits": (0, 3)},
+        {"space_digits": (3, 2)},
+    ]:
+        flow = PAdicFlow(3, 9, plane, **kwargs)
+        assert np.array_equal(flow.flow(t, x), expected), kwargs
+    with pytest.raises(ValueError):
+        PAdicFlow(3, 9, plane, space_digits=(1, 2, 3))
+    with pytest.raises(ValueError):
+        PAdicFlow(3, 9, plane, storage="dense", space_digits=(1, 2))
+
+
+def test_linear_coordinates_get_no_centres():
+    growth = TimeDependentFlow(3, 12, [{(1, 1): 1}])
+    autonomous = growth.autonomous
+    clock, state = autonomous.space_digits
+    assert clock >= 1 and state == 0
+    reference = TimeDependentFlow(3, 12, [{(1, 1): 1}], space_digits=0)
+    t0 = _random(3**12, 100)
+    t1 = t0 + 3 * _random(3**11, 100, seed=1)
+    x = _random(3**12, 100, seed=2)
+    assert np.array_equal(growth.flow(t0, t1, x), reference.flow(t0, t1, x))
+
+
+@pytest.mark.parametrize(
+    "d,deg,caps,weights,limit",
+    [
+        (2, 6, None, None, None),
+        (3, 5, (5, 1, 2), None, None),
+        (2, 8, (8, 3), (2, 3), 11),
+    ],
+)
+def test_weighted_simplex_layout(d, deg, caps, weights, limit):
+    exponents = simplex(d, deg, caps, weights, limit)
+    assert len(exponents) == simplex_size(d, deg, caps, weights, limit)
+    assert len(set(exponents)) == len(exponents)
+    caps = caps or (deg,) * d
+    weights = weights or (0,) * d
+    for e in exponents:
+        assert sum(e) <= deg and all(k <= c for k, c in zip(e, caps))
+        assert limit is None or sum(w * k for w, k in zip(weights, e)) <= limit
+    res = Residues(5, 9)
+    m = 5**9
+    x = _random(m, 40, d)
+    coefficients = _random(m, 1, 2, len(exponents), seed=3)
+    got = np.asarray(
+        simplex_horner(
+            res, coefficients, res.asarray(x), deg, None, caps, weights, limit
+        )
+    )
+    for b in range(40):
+        for c in range(2):
+            want = 0
+            for i, e in enumerate(exponents):
+                term = int(coefficients[0, c, i])
+                for j, k in enumerate(e):
+                    term = term * pow(int(x[b, j]), k, m) % m
+                want += term
+            assert got[b, c] == want % m
 
 
 def test_analytic_field_has_the_exact_flow():

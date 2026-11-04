@@ -1,3 +1,4 @@
+import functools
 import math
 
 import jax
@@ -471,25 +472,77 @@ def gather_horner(residues: Residues, table, index, x):
     return out
 
 
-def simplex(d: int, deg: int) -> list[tuple[int, ...]]:
-    """The exponents `e` in `d` variables with `|e| <= deg`, in the order in which
-    `simplex_horner` reads them.
+def _top(left, cap: int, weight: int, room) -> int:
+    top = min(left, cap)
+    if weight and room != math.inf:
+        top = min(top, room // weight)
+    return top
+
+
+def _layout(d: int, deg: int, caps, weights, limit):
+    caps = (deg,) * d if caps is None else tuple(int(c) for c in caps)
+    weights = (0,) * d if weights is None else tuple(int(w) for w in weights)
+    return caps, weights, math.inf if limit is None else limit
+
+
+def simplex(
+    d: int, deg: int, caps=None, weights=None, limit=None
+) -> list[tuple[int, ...]]:
+    """The exponents `e` in `d` variables with `|e| <= deg`, `e_j <= caps[j]` and
+    `sum_j weights[j] e_j <= limit`, in the order in which `simplex_horner` reads
+    them: each coordinate from its largest value down.
     """
-    if d == 0:
-        return [()]
-    return [(k,) + rest for k in range(deg, -1, -1) for rest in simplex(d - 1, deg - k)]
+    caps, weights, limit = _layout(d, deg, caps, weights, limit)
+
+    def build(j, left, room):
+        if j == d:
+            return [()]
+        top = _top(left, caps[j], weights[j], room)
+        return [
+            (k,) + rest
+            for k in range(top, -1, -1)
+            for rest in build(j + 1, left - k, room - k * weights[j])
+        ]
+
+    return build(0, deg, limit)
 
 
-def simplex_horner(residues: Residues, coefficients, x, deg: int, index=None):
-    """Polynomials of total degree at most `deg` in `d` variables, stored sparsely.
+def simplex_size(d: int, deg: int, caps=None, weights=None, limit=None) -> int:
+    """`len(simplex(d, deg, caps, weights, limit))`, without listing the exponents."""
+    caps, weights, limit = _layout(d, deg, caps, weights, limit)
 
-    `coefficients` has shape `(rows, *rest, M)` with one entry per exponent of
-    `simplex(d, deg)`; `x` has value shape `(batch, d)`. Horner's rule is nested over
-    the simplex of exponents, one multiplication per stored coefficient, instead of
-    `(deg + 1)^d` for dense storage. With `index`, point `b` uses row `index[b]`;
-    otherwise `rows` is `1` or `batch`. Returns `(batch, *rest)`.
+    @functools.cache
+    def count(j, left, room):
+        if j == d:
+            return 1
+        top = _top(left, caps[j], weights[j], room)
+        return sum(
+            count(j + 1, left - k, room - k * weights[j]) for k in range(top + 1)
+        )
+
+    return count(0, deg, limit)
+
+
+def simplex_horner(
+    residues: Residues,
+    coefficients,
+    x,
+    deg: int,
+    index=None,
+    caps=None,
+    weights=None,
+    limit=None,
+):
+    """Polynomials stored sparsely, one coefficient per exponent of
+    `simplex(d, deg, caps, weights, limit)`.
+
+    `coefficients` has shape `(rows, *rest, M)`; `x` has value shape `(batch, d)`.
+    Horner's rule is nested over the stored exponents, one multiplication per
+    coefficient, instead of `(deg + 1)^d` for dense storage. With `index`, point `b`
+    uses row `index[b]`; otherwise `rows` is `1` or `batch`. Returns `(batch, *rest)`.
     """
     d = x.shape[1]
+    caps, weights, limit = _layout(d, deg, caps, weights, limit)
     extra = residues.extra
     columns = jnp.moveaxis(coefficients, -1 - extra, 0)
     rest = columns.ndim - 2 - extra
@@ -500,12 +553,14 @@ def simplex_horner(residues: Residues, coefficients, x, deg: int, index=None):
         column = columns[next(position)]
         return column[index] if index is not None else column
 
-    def nest(j, budget):
+    def nest(j, left, room):
         if j == d:
             return leaf()
-        acc = nest(j + 1, 0)
-        for k in range(budget - 1, -1, -1):
-            acc = residues.add(residues.mul(acc, points[j]), nest(j + 1, budget - k))
+        top = _top(left, caps[j], weights[j], room)
+        acc = nest(j + 1, left - top, room - top * weights[j])
+        for k in range(top - 1, -1, -1):
+            lower = nest(j + 1, left - k, room - k * weights[j])
+            acc = residues.add(residues.mul(acc, points[j]), lower)
         return acc
 
-    return nest(0, deg)
+    return nest(0, deg, limit)

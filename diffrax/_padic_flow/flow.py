@@ -9,6 +9,7 @@ from .arithmetic import (
     scan_horner,
     simplex,
     simplex_horner,
+    simplex_size,
     valuation,
 )
 from .equilibria import equilibria, Equilibrium, jacobian, Linearization
@@ -83,17 +84,13 @@ class PAdicFlow:
         also be analytic, given as `PowerSeries`: the flow is then still exact, since
         modulo `p^{K + g}` the series is a polynomial.
     - `table_digits`: `J`. Defaults to the largest `J` with `p^J <= 32`.
-    - `space_digits`: `r`, the number of digits of the centres. Defaults to the
-        largest `r` whose tables hold at most `table_size` numbers; `0` disables the
-        reduction.
+    - `space_digits`: `r`, the number of digits of the centres, one per coordinate
+        or a single one for all. With sparse storage the default chooses
+        `(r_1, ..., r_d)` to minimise the work per point among the tables of at most
+        `table_size` numbers: coordinates in which the polynomials have low degree get
+        few digits or none, since reducing them saves little. With dense storage it is
+        the largest common `r` that fits. `0` disables the reduction.
     - `table_size`: the budget for `space_digits`, in `int64` entries.
-    - `reduction`: `"barrett"`, `"barrett32"`, `"remainder"`, `"double"` or
-        `"limbs"`; chosen automatically by default, see `Residues`.
-    - `storage`: `"dense"` stores every exponent up to the degree in each variable,
-        `(deg + 1)^d` coefficients per polynomial; `"sparse"` stores only total degree
-        at most `deg`, `C(deg + d, d)` of them, and evaluates them by Horner's rule
-        nested over that simplex. The Lie polynomials and the reduced tables have
-        that total degree, so nothing is lost. Defaults to `"sparse"` for `d > 1`.
     """
 
     def __init__(
@@ -103,7 +100,7 @@ class PAdicFlow:
         field,
         *,
         table_digits: int | None = None,
-        space_digits: int | None = None,
+        space_digits: int | tuple[int, ...] | None = None,
         table_size: int = 2**20,
         reduction: str | None = None,
         storage: str | None = None,
@@ -145,26 +142,40 @@ class PAdicFlow:
         self.terms = terms
         guard = factorial_valuation(terms - 1, p)
         self.field = field = parse_field(given, p, digits=K + guard)
-        layout = to_sparse if storage == "sparse" else to_dense
 
-        def stored(polys, deg):
-            return np.asarray(residues.asarray(layout(polys, d, deg)))
+        def caps_of(polys):
+            return tuple(
+                max((e[j] for poly in polys for e in poly), default=0) for j in range(d)
+            )
+
+        def stored(polys, layout):
+            if storage == "sparse":
+                array = to_sparse(polys, d, layout[0], layout[1])
+            else:
+                array = to_dense(polys, d, layout[0])
+            return np.asarray(residues.asarray(array))
 
         taylor = self._divided_series(None)
         self.degree = max(degree(polys) for polys in taylor)
-        series = np.stack([stored(polys, self.degree) for polys in taylor])
+        layout = (self.degree, caps_of([g for polys in taylor for g in polys]))
+        self._taylor_layout = layout + (None, None)
+        series = np.stack([stored(polys, layout) for polys in taylor])
         self._taylor = series
         reduced = [
             {e: c for e, c in component.items() if c}
             for component in reduce(field, self.modulus)
         ]
-        self._field_degree = degree(reduced)
-        self._field = stored(reduced, self._field_degree)
+        self._field_layout = (degree(reduced), caps_of(reduced), None, None)
+        self._field = stored(reduced, self._field_layout)
 
         tail = _terms(p, K, rate + table_digits)
         tail_degree = max(degree(polys) for polys in taylor[:tail])
+        tail_layout = (
+            tail_degree,
+            caps_of([g for polys in taylor[:tail] for g in polys]),
+        )
         self.tail_terms = tail
-        tail_polys = np.stack([stored(polys, tail_degree) for polys in taylor[:tail]])
+        tail_polys = np.stack([stored(polys, tail_layout) for polys in taylor[:tail]])
 
         size = p**table_digits
         axes = series.ndim - 1 - residues.extra
@@ -174,49 +185,92 @@ class PAdicFlow:
         for coefficients in series[::-1]:
             table = residues.add(residues.mul(table, s), jnp.asarray(coefficients))
 
-        def count(deg):
-            if storage == "sparse":
-                return math.comb(deg + d, d)
-            return (deg + 1) ** d
+        words = getattr(residues, "limbs", 1)
 
-        def entries(r):
-            head = min(self.degree, -(-K // r) - 1)
-            low = min(tail_degree, -(-K // r) - 1)
-            centres = p ** (r * d)
-            words = getattr(residues, "limbs", 1)
-            return centres * d * words * (size * count(head) + tail * count(low))
+        def count(layout, r):
+            deg, caps = layout
+            if storage == "dense":
+                return (min(deg, -(-K // r[0]) - 1) + 1 if r[0] else deg + 1) ** d
+            return simplex_size(d, deg, caps, r, K - 1)
+
+        def cost(r):
+            head, low = count(layout, r), count(tail_layout, r)
+            work = head + tail * low
+            return work, p ** sum(r) * d * words * (size * head + tail * low)
 
         largest = min(K - 1, getattr(residues, "width", K))
         if space_digits is None:
-            space_digits = 0
-            for r in range(1, largest + 1):
-                if entries(r) > table_size:
-                    break
-                space_digits = r
-        space_digits = int(space_digits)
-        if not 0 <= space_digits <= largest:
-            raise ValueError(f"`space_digits` must lie in 0, ..., {largest}.")
-        self.space_digits = space_digits
+            space_digits = self._choose_centres(cost, layout[1], largest, table_size)
+        r = (int(space_digits),) * d if np.ndim(space_digits) == 0 else space_digits
+        r = tuple(int(v) for v in r)
+        if len(r) != d or not all(0 <= v <= largest for v in r):
+            raise ValueError(
+                f"`space_digits` must be {d} integers in 0, ..., {largest}."
+            )
+        if storage == "dense" and len(set(r)) > 1:
+            raise ValueError("Dense storage needs the same `space_digits` everywhere.")
+        self.space_digits = r
         if storage == "sparse":
-            table, self.table_degree = self._recenter_sparse(
-                table, space_digits, self.degree
+            table, self._table_layout = self._recenter_sparse(table, r, layout)
+            tail, self._tail_layout = self._recenter_sparse(
+                jnp.asarray(tail_polys), r, tail_layout
             )
-            tail, self._tail_degree = self._recenter_sparse(
-                jnp.asarray(tail_polys), space_digits, tail_degree
-            )
+            self.table_degree = max(map(sum, simplex(d, *self._table_layout)))
         else:
-            table = self._recenter(table, space_digits)
+            table = self._recenter(table, r[0])
             self.table_degree = table.shape[table.ndim - residues.extra - 1] - 1
-            tail = self._recenter(jnp.asarray(tail_polys), space_digits)
-            self._tail_degree = tail.shape[tail.ndim - residues.extra - 1] - 1
+            tail = self._recenter(jnp.asarray(tail_polys), r[0])
+            degree_tail = tail.shape[tail.ndim - residues.extra - 1] - 1
+            self._table_layout = (self.table_degree, None, None, None)
+            self._tail_layout = (degree_tail, None, None, None)
         table = np.asarray(table)
         self._table = table.reshape((-1,) + table.shape[2:])
         self._tail = np.moveaxis(np.asarray(tail), 1, 0)
 
-    def _evaluate(self, coefficients, x, deg: int, index=None):
+    def _choose_centres(self, cost, caps, largest: int, budget: int):
+        """The digits `(r_1, ..., r_d)` of the centres with the least work per point
+        among those whose tables fit `budget`. With dense storage, the largest common
+        `r` that fits. With sparse storage the candidates are every common `r` over
+        the coordinates in which the polynomials are not affine, and the path that
+        adds one digit at a time where it helps most.
+        """
+        d = self.dimension
+        if self.storage == "dense":
+            best = (0,) * d
+            for r in range(1, largest + 1):
+                if cost((r,) * d)[1] > budget:
+                    break
+                best = (r,) * d
+            return best
+        candidates = [(0,) * d]
+        curved = [j for j in range(d) if caps[j] >= 2]
+        for r in range(1, largest + 1):
+            trial = tuple(r if j in curved else 0 for j in range(d))
+            if cost(trial)[1] > budget:
+                break
+            candidates.append(trial)
+        current = [0] * d
+        while True:
+            options = []
+            for j in curved:
+                if current[j] < largest:
+                    trial = tuple(current[:j] + [current[j] + 1] + current[j + 1 :])
+                    work, entries = cost(trial)
+                    if entries <= budget:
+                        options.append((work, entries, -caps[j], trial))
+            if not options:
+                break
+            current = list(min(options)[3])
+            candidates.append(tuple(current))
+        return min(candidates, key=lambda r: cost(r))
+
+    def _evaluate(self, coefficients, x, layout, index=None):
         coefficients = jnp.asarray(coefficients)
         if self.storage == "sparse":
-            return simplex_horner(self.residues, coefficients, x, deg, index)
+            deg, caps, weights, limit = layout
+            return simplex_horner(
+                self.residues, coefficients, x, deg, index, caps, weights, limit
+            )
         return evaluate(self.residues, coefficients, x, index)
 
     def _recenter(self, coefficients, r: int):
@@ -257,37 +311,41 @@ class PAdicFlow:
         rest = out.shape[1 + d :]
         return out.reshape((lead, math.prod(centre_axes)) + rest)
 
-    def _recenter_sparse(self, coefficients, r: int, deg: int):
-        """`_recenter` for polynomials stored over `simplex(d, deg)`, shape
-        `(L, *rest, M)`, without ever forming dense arrays. The variables are shifted
-        one at a time, `x_j -> a_j + p^r y_j`, which keeps the total degree, and the
-        terms of total degree `|e| >= K / r` are dropped at the end. Returns the
-        polynomials over `simplex(d, deg')`, shape `(L, p^{rd}, *rest, M')`, and
-        `deg'`.
+    def _recenter_sparse(self, coefficients, r, layout):
+        """`_recenter` for polynomials stored over `simplex(d, deg, caps)`, shape
+        `(L, *rest, M)`, with `r_j` digits for coordinate `j`, without ever forming
+        dense arrays. The variables are shifted one at a time,
+        `x_j -> a_j + p^{r_j} y_j`, which keeps the total degree and the degree in each
+        variable, and the terms with `sum_j r_j e_j >= K` are dropped at the end.
+        Returns the polynomials, shape `(L, p^{sum r}, *rest, M')`, and their layout.
         """
         res, p, K, d = self.residues, self.p, self.precision, self.dimension
+        deg, caps = layout
         out = jnp.asarray(coefficients)[:, None]
-        if r == 0:
-            return out, deg
-        exponents = simplex(d, deg)
+        if not any(r):
+            return out, (deg, caps, None, None)
+        exponents = simplex(d, deg, caps)
         position = {e: i for i, e in enumerate(exponents)}
-        side = p**r
-        centres = res.asarray(jnp.arange(side, dtype=jnp.int64))
-        powers = [jnp.broadcast_to(res.constant(1), centres.shape)]
-        for _ in range(deg):
-            powers.append(res.mul(powers[-1], centres))
         tail = out.shape[out.ndim - res.extra :]
         monomial = out.ndim - res.extra - 1
         for j in range(d):
+            if not r[j]:
+                continue
+            side = p ** r[j]
+            centres = res.asarray(jnp.arange(side, dtype=jnp.int64))
+            powers = [jnp.broadcast_to(res.constant(1), centres.shape)]
+            for _ in range(caps[j]):
+                powers.append(res.mul(powers[-1], centres))
             lead, rest = out.shape[:2], out.shape[2:monomial]
             shape = lead + (side,) + rest + (len(exponents),)
             total = res.zeros(shape)
-            for s in range(deg + 1):
+            for s in range(caps[j] + 1):
                 pairs = []
                 for e in exponents:
                     f = e[:j] + (e[j] + s,) + e[j + 1 :]
                     if f in position:
-                        scale = pow(p, r * e[j], self.modulus) if r * e[j] < K else 0
+                        power = r[j] * e[j]
+                        scale = pow(p, power, self.modulus) if power < K else 0
                         weight = math.comb(f[j], e[j]) * scale % self.modulus
                         pairs.append((position[f], position[e], weight))
                 if not pairs:
@@ -303,8 +361,8 @@ class PAdicFlow:
                 index = (Ellipsis, jnp.asarray(target)) + (slice(None),) * res.extra
                 total = res.add(total, res.zeros(shape).at[index].set(product))
             out = total.reshape((lead[0], lead[1] * side) + total.shape[3:])
-        new = min(deg, -(-K // r) - 1)
-        keep = jnp.asarray([position[e] for e in simplex(d, new)])
+        new = (deg, caps, tuple(r), K - 1)
+        keep = jnp.asarray([position[e] for e in simplex(d, *new)])
         return jnp.take(out, keep, axis=out.ndim - res.extra - 1), new
 
     def _divided_series(self, start):
@@ -391,18 +449,21 @@ class PAdicFlow:
     #
 
     def _split(self, x):
-        """Centre index and reduced coordinates: `x = a + p^r y`."""
-        r = self.space_digits
-        if r == 0:
-            return jnp.zeros(x.shape[0], dtype=jnp.int64), x
-        scale = self.p**r
-        digits = self.residues.low(x, r)
-        weights = jnp.asarray(
-            [scale ** (self.dimension - 1 - j) for j in range(self.dimension)],
-            dtype=jnp.int64,
-        )
-        index = (digits * jnp.broadcast_to(weights, digits.shape)).sum(axis=-1)
-        return index, self.residues.shift(x, r)
+        """Centre index and reduced coordinates: `x_j = a_j + p^{r_j} y_j`, with the
+        centre numbered in mixed radix, first coordinate most significant.
+        """
+        res = self.residues
+        index = jnp.zeros(x.shape[0], dtype=jnp.int64)
+        if not any(self.space_digits):
+            return index, x
+        parts = []
+        for j, r in enumerate(self.space_digits):
+            coordinate = x[:, j]
+            if r:
+                index = index * self.p**r + res.low(coordinate, r)
+                coordinate = res.shift(coordinate, r)
+            parts.append(coordinate)
+        return index, jnp.stack(parts, axis=1)
 
     def _small_flow(self, sigma, x, digits: int):
         """`phi_sigma(x)` for `sigma` divisible by `p^digits`, `digits >= J`: only the
@@ -413,14 +474,14 @@ class PAdicFlow:
         terms = min(self.tail_terms, _terms(self.p, self.precision, rate))
         centre, y = self._split(x)
         tail = self._tail[:, :terms]
-        values = self._evaluate(tail, y, self._tail_degree, centre)
+        values = self._evaluate(tail, y, self._tail_layout, centre)
         values = jnp.moveaxis(values, 1, -1 - res.extra)
         return scan_horner(res, values, sigma[:, None])
 
     def _flow(self, t, x, method: str = "table"):
         res = self.residues
         if method == "taylor":
-            values = self._evaluate(self._taylor[None], x, self.degree)
+            values = self._evaluate(self._taylor[None], x, self._taylor_layout)
             values = jnp.moveaxis(values, 1, -1 - res.extra)
             return scan_horner(res, values, t[:, None])
         if method != "table":
@@ -428,8 +489,8 @@ class PAdicFlow:
         low = res.low(t, self.table_digits)
         sigma = res.sub(t, res.asarray(low))
         centre, y = self._split(x)
-        row = low * self.p ** (self.space_digits * self.dimension) + centre
-        middle = self._evaluate(self._table, y, self.table_degree, row)
+        row = low * self.p ** sum(self.space_digits) + centre
+        middle = self._evaluate(self._table, y, self._table_layout, row)
         return self._small_flow(sigma, middle, self.table_digits)
 
     def flow(self, t, x, method: str = "table"):
@@ -447,7 +508,7 @@ class PAdicFlow:
         return self._unflatten(batch, self._vector_field(x))
 
     def _vector_field(self, x):
-        return self._evaluate(self._field[None], x, self._field_degree)
+        return self._evaluate(self._field[None], x, self._field_layout)
 
     def mahler_coefficients(self, x, count: int | None = None):
         """`Delta^n(x) = sum_j (-1)^{n-j} C(n, j) phi_j(x)` for `n < count` (default
