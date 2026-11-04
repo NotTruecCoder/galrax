@@ -22,6 +22,7 @@ from ._padic_flow import (
     PAdicEvent as PAdicEvent,
     PAdicFlow as PAdicFlow,
     PAdicMap as PAdicMap,
+    PowerSeries as PowerSeries,
     Residues as Residues,
     TimeDependentFlow as TimeDependentFlow,
 )

@@ -15,6 +15,7 @@ from diffrax.padic_flow import (
     PAdicEvent,
     PAdicFlow,
     PAdicMap,
+    PowerSeries,
     Residues,
     TimeDependentFlow,
 )
@@ -626,6 +627,58 @@ def test_sparse_storage_matches_dense(p, K, field):
     assert sparse.space_digits >= dense.space_digits
     with pytest.raises(ValueError):
         PAdicFlow(p, K, [dict(c) for c in field], storage="compressed")
+
+
+def test_sparse_flow_in_four_dimensions():
+    field = [{(0, 1, 0, 0): 3}, {(0, 0, 1, 0): 3}, {(0, 0, 0, 1): 3}, {(2, 0, 0, 0): 3}]
+    flow = PAdicFlow(3, 5, field)
+    assert flow.storage == "sparse" and flow.space_digits >= 1
+    x = _random(3**5, 300, 4)
+    t = _random(3**5, 300, seed=1)
+    z = flow.flow(t, x)
+    assert np.array_equal(flow.flow(t, x, method="taylor"), z)
+    assert np.array_equal(flow.flow(-t, z), x)
+
+
+def test_analytic_field_has_the_exact_flow():
+    p, K = 3, 12
+    m = p**K
+    flow = PAdicFlow(p, K, [3 * PowerSeries.geometric(3)])
+    x = _random(m, 300)
+    t = _random(m, 300, seed=1)
+    z = np.asarray(flow.flow(t, x)).astype(object)
+    half = pow(2, -1, m)
+    invariant = (z - 3 * z * z * half) % m
+    expected = (x.astype(object) - 3 * x.astype(object) ** 2 * half + 3 * t) % m
+    assert np.array_equal(invariant, expected)
+    assert np.array_equal(flow.flow(t, x, method="taylor"), flow.flow(t, x))
+
+
+def test_analytic_fields_agree_across_precisions():
+    field = 3 * PowerSeries.exp(3) - 3 + PowerSeries.log1p(9) * 2
+    coarse, fine = PAdicFlow(3, 7, [field]), PAdicFlow(3, 15, [field])
+    x = _random(3**15, 300)
+    t = _random(3**15, 300, seed=1)
+    z = fine.flow(t, x)
+    assert np.array_equal(np.asarray(z) % 3**7, coarse.flow(t, x))
+    assert np.array_equal(fine.flow(t[::-1], z), fine.flow(t + t[::-1], x))
+    plane = [3 * PowerSeries.exp(3, 1, 2), 3 * PowerSeries.variable(0, 2)]
+    small, large = PAdicFlow(3, 5, plane), PAdicFlow(3, 9, plane)
+    y = _random(3**9, 200, 2)
+    assert np.array_equal(
+        np.asarray(large.flow(t[:200], y)) % 3**5, small.flow(t[:200], y)
+    )
+    clock = TimeDependentFlow(3, 9, [PowerSeries.exp(3, 0, 2)])
+    late = clock.flow(0, 3 * np.arange(10), np.zeros(10, dtype=np.int64))
+    early = TimeDependentFlow(3, 5, [PowerSeries.exp(3, 0, 2)])
+    assert np.array_equal(
+        np.asarray(late) % 3**5,
+        early.flow(0, 3 * np.arange(10), np.zeros(10, dtype=np.int64)),
+    )
+    with pytest.raises(ValueError, match="converges"):
+        PAdicFlow(3, 6, [3 * PowerSeries.exp(1)])
+    with pytest.raises(ValueError, match="divisible"):
+        PAdicFlow(3, 6, [PowerSeries.geometric(3)])
 
 
 #

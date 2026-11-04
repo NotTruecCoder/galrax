@@ -4,30 +4,46 @@ from fractions import Fraction
 import jax.numpy as jnp
 import numpy as np
 
-from .arithmetic import gather_horner, Residues, scan_horner, valuation
+from .arithmetic import gather_horner, Residues, scan_horner, simplex, valuation
+from .series import PowerSeries
 
 
-def parse_field(field, p: int, extra_variables: int = 0) -> list[dict]:
-    """A polynomial vector field as one `{exponents: coefficient}` dictionary per
-    component. One-dimensional fields may also be given as the coefficient list
+def parse_field(
+    field, p: int, extra_variables: int = 0, digits: int | None = None
+) -> list:
+    """A vector field as one `{exponents: coefficient}` dictionary per component.
+    One-dimensional fields may also be given as the coefficient list
     `[c_0, c_1, ...]` of `c_0 + c_1 x + ...`. Coefficients are integers or fractions
-    whose denominators are not divisible by `p`. With `extra_variables = 1` the
-    components are functions of one more variable (time) than there are components.
+    whose denominators are not divisible by `p`. Components may also be
+    `PowerSeries`; with `digits` they are cut to polynomials that agree with them
+    modulo `p^digits`, and without it they are kept as they are. With
+    `extra_variables = 1` the components are functions of one more variable (time)
+    than there are components.
     """
-    if isinstance(field, dict):
+    if isinstance(field, (dict, PowerSeries)):
         field = [field]
     field = list(field)
     if len(field) == 0:
         raise ValueError("The vector field needs at least one component.")
-    if not isinstance(field[0], dict):
+    if not isinstance(field[0], (dict, PowerSeries)):
         field = [{(i,): c for i, c in enumerate(field)}]
-    first = next(iter(field[0]), None)
-    if first is not None:
+    series = [c for c in field if isinstance(c, PowerSeries)]
+    first = next(iter(field[0]), None) if isinstance(field[0], dict) else None
+    if series:
+        d = series[0].dimension
+    elif first is not None:
         d = len(np.atleast_1d(first))
     else:
         d = len(field) + extra_variables
     out = []
     for component in field:
+        if isinstance(component, PowerSeries):
+            if component.dimension != d:
+                raise ValueError(f"Every component must be a series in {d} variables.")
+            if digits is None:
+                out.append(component)
+                continue
+            component = component.terms(p, digits)
         if not isinstance(component, dict):
             raise ValueError("Give every component as {exponents: coefficient}.")
         clean = {}
@@ -140,6 +156,19 @@ def to_dense(polys: list[dict], d: int, deg: int) -> np.ndarray:
     for k, poly in enumerate(polys):
         for e, c in poly.items():
             out[(k,) + e] = c
+    return out
+
+
+def to_sparse(polys: list[dict], d: int, deg: int) -> np.ndarray:
+    """Polynomials of total degree at most `deg` as an array of shape
+    `(len(polys), M)`, one entry per exponent of `simplex(d, deg)`.
+    """
+    position = {e: i for i, e in enumerate(simplex(d, deg))}
+    big = any(c >= 2**63 for poly in polys for c in poly.values())
+    out = np.zeros((len(polys), len(position)), dtype=object if big else np.int64)
+    for k, poly in enumerate(polys):
+        for e, c in poly.items():
+            out[k, position[e]] = c
     return out
 
 

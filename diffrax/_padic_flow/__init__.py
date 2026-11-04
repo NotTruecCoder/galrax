@@ -8,3 +8,4 @@ from .koopman import (
 )
 from .maps import Component as Component, Cycle as Cycle, PAdicMap as PAdicMap
 from .roots import Ball as Ball
+from .series import PowerSeries as PowerSeries

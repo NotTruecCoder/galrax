@@ -21,7 +21,9 @@ from .polynomial import (
     parse_field,
     reduce,
     to_dense,
+    to_sparse,
 )
+from .series import PowerSeries
 
 
 def _terms(p: int, precision: int, rate: int) -> int:
@@ -77,7 +79,9 @@ class PAdicFlow:
     - `field`: the vector field. For `d = 1`, the coefficients `[c_0, c_1, ...]` of
         `c_0 + c_1 x + ...`. In general, one dictionary `{exponents: coefficient}` per
         component, e.g. `[{(0, 1): 3}, {(1, 0): -3}]` for `(3y, -3x)`. Coefficients
-        are integers or fractions with denominators prime to `p`.
+        are integers or fractions with denominators prime to `p`. Components may
+        also be analytic, given as `PowerSeries`: the flow is then still exact, since
+        modulo `p^{K + g}` the series is a polynomial.
     - `table_digits`: `J`. Defaults to the largest `J` with `p^J <= 32`.
     - `space_digits`: `r`, the number of digits of the centres. Defaults to the
         largest `r` whose tables hold at most `table_size` numbers; `0` disables the
@@ -106,7 +110,8 @@ class PAdicFlow:
     ):
         residues = make_residues(p, precision, reduction)
         p, K = residues.p, residues.precision
-        field = parse_field(field, p)
+        given = field
+        field = parse_field(given, p, digits=K)
         d = len(field)
         rate = field_valuation(field, p, cap=K)
         needed = 2 if p == 2 else 1
@@ -132,33 +137,41 @@ class PAdicFlow:
         self.precision = K
         self.modulus = residues.modulus
         self.dimension = d
-        self.field = field
         self.field_valuation = rate
         self.table_digits = table_digits
         self.storage = storage
 
         terms = _terms(p, K, rate)
         self.terms = terms
+        guard = factorial_valuation(terms - 1, p)
+        self.field = field = parse_field(given, p, digits=K + guard)
+        layout = to_sparse if storage == "sparse" else to_dense
+
+        def stored(polys, deg):
+            return np.asarray(residues.asarray(layout(polys, d, deg)))
+
         taylor = self._divided_series(None)
         self.degree = max(degree(polys) for polys in taylor)
-        dense = np.stack([to_dense(polys, d, self.degree) for polys in taylor])
-        dense = np.asarray(residues.asarray(dense))
-        field_dense = to_dense(reduce(field, self.modulus), d, degree(field))
-        self._field = np.asarray(residues.asarray(field_dense))
+        series = np.stack([stored(polys, self.degree) for polys in taylor])
+        self._taylor = series
+        reduced = [
+            {e: c for e, c in component.items() if c}
+            for component in reduce(field, self.modulus)
+        ]
+        self._field_degree = degree(reduced)
+        self._field = stored(reduced, self._field_degree)
 
         tail = _terms(p, K, rate + table_digits)
         tail_degree = max(degree(polys) for polys in taylor[:tail])
         self.tail_terms = tail
-        tail_polys = dense[
-            (slice(0, tail), slice(None)) + (slice(0, tail_degree + 1),) * d
-        ]
-        self._taylor = self._store(dense, self.degree)
+        tail_polys = np.stack([stored(polys, tail_degree) for polys in taylor[:tail]])
 
         size = p**table_digits
-        s = jnp.arange(size, dtype=jnp.int64).reshape((size,) + (1,) * (d + 1))
+        axes = series.ndim - 1 - residues.extra
+        s = jnp.arange(size, dtype=jnp.int64).reshape((size,) + (1,) * axes)
         s = residues.asarray(s)
-        table = jnp.zeros((size,) + dense.shape[1:], dtype=jnp.int64)
-        for coefficients in dense[::-1]:
+        table = jnp.zeros((size,) + series.shape[1:], dtype=jnp.int64)
+        for coefficients in series[::-1]:
             table = residues.add(residues.mul(table, s), jnp.asarray(coefficients))
 
         def count(deg):
@@ -184,23 +197,21 @@ class PAdicFlow:
         if not 0 <= space_digits <= largest:
             raise ValueError(f"`space_digits` must lie in 0, ..., {largest}.")
         self.space_digits = space_digits
-        table = self._recenter(table, space_digits)
-        self.table_degree = table.shape[table.ndim - residues.extra - 1] - 1
-        table = self._store(table, self.table_degree)
+        if storage == "sparse":
+            table, self.table_degree = self._recenter_sparse(
+                table, space_digits, self.degree
+            )
+            tail, self._tail_degree = self._recenter_sparse(
+                jnp.asarray(tail_polys), space_digits, tail_degree
+            )
+        else:
+            table = self._recenter(table, space_digits)
+            self.table_degree = table.shape[table.ndim - residues.extra - 1] - 1
+            tail = self._recenter(jnp.asarray(tail_polys), space_digits)
+            self._tail_degree = tail.shape[tail.ndim - residues.extra - 1] - 1
+        table = np.asarray(table)
         self._table = table.reshape((-1,) + table.shape[2:])
-        tail = self._recenter(jnp.asarray(tail_polys), space_digits)
-        self._tail_degree = tail.shape[tail.ndim - residues.extra - 1] - 1
-        self._tail = np.moveaxis(self._store(tail, self._tail_degree), 1, 0)
-
-    def _store(self, dense, deg: int):
-        """Dense coefficients `(..., deg' + 1, ..., deg' + 1)` as stored: unchanged,
-        or for sparse storage the entries of total degree at most `deg`.
-        """
-        dense = np.asarray(dense)
-        if self.storage == "dense":
-            return dense
-        exponents = tuple(np.array(e) for e in zip(*simplex(self.dimension, deg)))
-        return dense[(Ellipsis,) + exponents + (slice(None),) * self.residues.extra]
+        self._tail = np.moveaxis(np.asarray(tail), 1, 0)
 
     def _evaluate(self, coefficients, x, deg: int, index=None):
         coefficients = jnp.asarray(coefficients)
@@ -245,6 +256,56 @@ class PAdicFlow:
         centre_axes = out.shape[1 : 1 + d]
         rest = out.shape[1 + d :]
         return out.reshape((lead, math.prod(centre_axes)) + rest)
+
+    def _recenter_sparse(self, coefficients, r: int, deg: int):
+        """`_recenter` for polynomials stored over `simplex(d, deg)`, shape
+        `(L, *rest, M)`, without ever forming dense arrays. The variables are shifted
+        one at a time, `x_j -> a_j + p^r y_j`, which keeps the total degree, and the
+        terms of total degree `|e| >= K / r` are dropped at the end. Returns the
+        polynomials over `simplex(d, deg')`, shape `(L, p^{rd}, *rest, M')`, and
+        `deg'`.
+        """
+        res, p, K, d = self.residues, self.p, self.precision, self.dimension
+        out = jnp.asarray(coefficients)[:, None]
+        if r == 0:
+            return out, deg
+        exponents = simplex(d, deg)
+        position = {e: i for i, e in enumerate(exponents)}
+        side = p**r
+        centres = res.asarray(jnp.arange(side, dtype=jnp.int64))
+        powers = [jnp.broadcast_to(res.constant(1), centres.shape)]
+        for _ in range(deg):
+            powers.append(res.mul(powers[-1], centres))
+        tail = out.shape[out.ndim - res.extra :]
+        monomial = out.ndim - res.extra - 1
+        for j in range(d):
+            lead, rest = out.shape[:2], out.shape[2:monomial]
+            shape = lead + (side,) + rest + (len(exponents),)
+            total = res.zeros(shape)
+            for s in range(deg + 1):
+                pairs = []
+                for e in exponents:
+                    f = e[:j] + (e[j] + s,) + e[j + 1 :]
+                    if f in position:
+                        scale = pow(p, r * e[j], self.modulus) if r * e[j] < K else 0
+                        weight = math.comb(f[j], e[j]) * scale % self.modulus
+                        pairs.append((position[f], position[e], weight))
+                if not pairs:
+                    continue
+                source, target, weights = zip(*pairs)
+                weights = res.asarray(np.array(weights, dtype=object))
+                weights = res.mul(powers[s][:, None], weights[None, :])
+                weights = weights.reshape(
+                    (1, 1, side) + (1,) * len(rest) + (len(pairs),) + tail
+                )
+                taken = jnp.take(out, jnp.asarray(source), axis=monomial)
+                product = res.mul(jnp.expand_dims(taken, 2), weights)
+                index = (Ellipsis, jnp.asarray(target)) + (slice(None),) * res.extra
+                total = res.add(total, res.zeros(shape).at[index].set(product))
+            out = total.reshape((lead[0], lead[1] * side) + total.shape[3:])
+        new = min(deg, -(-K // r) - 1)
+        keep = jnp.asarray([position[e] for e in simplex(d, new)])
+        return jnp.take(out, keep, axis=out.ndim - res.extra - 1), new
 
     def _divided_series(self, start):
         """`[g, Dg, D^2 g / 2!, ...]` modulo `p^K`, `self.terms` entries, for the
@@ -386,7 +447,7 @@ class PAdicFlow:
         return self._unflatten(batch, self._vector_field(x))
 
     def _vector_field(self, x):
-        return evaluate(self.residues, self._field[None], x)
+        return self._evaluate(self._field[None], x, self._field_degree)
 
     def mahler_coefficients(self, x, count: int | None = None):
         """`Delta^n(x) = sum_j (-1)^{n-j} C(n, j) phi_j(x)` for `n < count` (default
@@ -610,7 +671,12 @@ class TimeDependentFlow:
         d = len(field)
         q = 4 if p == 2 else p
         clock = {(0,) * (d + 1): q}
-        scaled = [{e: q * c for e, c in component.items()} for component in field]
+        scaled = [
+            q * component
+            if isinstance(component, PowerSeries)
+            else {e: q * c for e, c in component.items()}
+            for component in field
+        ]
         self.p = p
         self.dimension = d
         self.step = q
