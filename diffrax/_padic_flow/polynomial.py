@@ -4,7 +4,7 @@ from fractions import Fraction
 import jax.numpy as jnp
 import numpy as np
 
-from .arithmetic import Residues, scan_horner, valuation
+from .arithmetic import gather_horner, Residues, scan_horner, valuation
 
 
 def parse_field(field, p: int, extra_variables: int = 0) -> list[dict]:
@@ -140,18 +140,26 @@ def to_dense(polys: list[dict], d: int, deg: int) -> np.ndarray:
     return out
 
 
-def evaluate(residues: Residues, coefficients, x):
+def evaluate(residues: Residues, coefficients, x, index=None):
     """Values of dense polynomials at points.
 
     `coefficients` has shape `(batch or 1, *rest, deg + 1, ..., deg + 1)` with the last
     `d` axes indexing the exponents of `x_0, ..., x_{d-1}`; `x` has shape
     `(batch, d)`. Returns shape `(batch, *rest)`.
+
+    With `index` (shape `(batch,)`), `coefficients` is a table of polynomials and
+    point `b` uses row `index[b]`. The rows are gathered one coefficient at a time
+    inside Horner's loop, so the per-point coefficients are never materialised.
     """
     d = x.shape[-1]
     out = jnp.asarray(coefficients)
     for j in reversed(range(d)):
         point = x[:, j].reshape((-1,) + (1,) * (out.ndim - 2))
-        out = scan_horner(residues, out, point)
+        if index is not None:
+            out = gather_horner(residues, out, index, point)
+            index = None
+        else:
+            out = scan_horner(residues, out, point)
     return out
 
 

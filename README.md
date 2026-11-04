@@ -134,7 +134,9 @@ Take $dx/dt = f(x)$ with a state $x \in \mathbb{Z}_p^d$. A path $\mathbb{R} \to 
 `PAdicFlow` builds that polynomial once, exactly, and then answers queries with no time stepping and no rounding.
 
 - **Exact flow for any $(t, x)$** with two polynomial evaluations. Write $t = t_{lo} + \sigma$ with $t_{lo} < p^J$. Then $\varphi_t = \varphi_\sigma \circ \varphi_{t_{lo}}$, where $\varphi_{t_{lo}}$ comes from a table of $p^J$ polynomials. The time $\sigma$ is $p$-adically small, so $\varphi_\sigma$ needs only a few Lie terms. This is the way table-driven `exp` is computed. The full series (`method="taylor"`) gives bit-identical results.
-- **Every query is independent**, so batches of millions of times and points run in one call. The arithmetic is division-free `int64` with Barrett reduction, under `jit`.
+- **Low degree by space reduction.** Write $x = a + p^r y$ with $a$ running over the $p^{rd}$ balls of radius $p^{-r}$. Re-expanded around $a$, the term of degree $e$ in $y$ gains the factor $p^{r e}$, so modulo $p^K$ the table polynomials have degree below $K / r$ instead of about $K$. The largest $r$ whose table fits `table_size` entries is chosen; for 19 digits of $\mathbb{Z}_3$ the degree drops from 33 to 2.
+- **Every query is independent**, so batches of millions of times and points run in one call under `jit`. Each point reads its row of the table inside Horner's loop, one coefficient at a time, so no per-point copy of the coefficients is made.
+- **Flow-box coordinates by short flows.** Newton's correction at step $j$ is divisible by $p^{2^j - 1}$, so after the first steps it is undone with the few-term Lie series of a small time instead of a full flow.
 - **Mahler interpolation.** The iterates of $\varphi_1$ determine the flow at every $p$-adic time: $\varphi_t(x) = \sum_n \binom{t}{n} \Delta^n(x)$ with $\Delta^n(x)$ divisible by $p^n$.
 - **Orbits are balls.** In one dimension, the orbit $\{\varphi_t(x) : t \in \mathbb{Z}_p\}$ of a non-equilibrium point is the whole ball $B(x, |f(x)|_p)$. The map $t \mapsto \varphi_t(x)$ multiplies distances by exactly $|f(x)|_p$. In $d$ dimensions the orbit is a curve with the same property.
 - **Flow-box coordinates.** Around $x$, every point of $B(x, |f(x)|_p)$ is written uniquely as $\varphi_s(w)$, with $w$ on a transversal through $x$. In these coordinates the flow is $s \mapsto s + t$. They are computed by Newton's method, which doubles the number of correct digits per step.
@@ -205,15 +207,17 @@ z = plane.flow(100, np.array([1, 2]))
 s, foot = plane.rectify(np.array([1, 2]), z)  # s = 100, foot = [1, 2]
 ```
 
-Throughput for $10^6$ random $(t, x)$ per call, on a laptop CPU under `jit`. The results are exact, and both methods agree bit for bit. These numbers have not been measured on a GPU.
+Throughput for $10^6$ random $(t, x)$ per call under `jit`, on a laptop GPU with 6 GB of memory (JAX 0.12 with CUDA 12, in WSL2): the median of 20 calls after 5 warm-up calls. The results are exact; every method agrees bit for bit. "Before" is the version without space reduction, gathered Horner and short Newton flows; for $d = 2$ it is the current code with `space_digits=0`.
 
-| $p$, digits | Lie terms $N$ | Degree | `"table"` | `"taylor"` | `rectify` |
-|---|---|---|---|---|---|
-| 3, 19 | 36 | 33 | 2.0 M/s | 0.1 M/s | 0.16 M/s |
-| 5, 13 | 16 | 13 | 2.7 M/s | 0.6 M/s | 0.39 M/s |
-| 7, 11 | 12 | 11 | 2.2 M/s | 0.9 M/s | 0.33 M/s |
+| $p$, digits, $d$ | Degree before → after | `flow` before → after | `rectify` before → after |
+|---|---|---|---|
+| 3, 19, 1 | 33 → 2 | 71 → 215 M/s | 9.7 → 41 M/s |
+| 5, 13, 1 | 13 → 2 | 125 → 199 M/s | 19 → 48 M/s |
+| 7, 11, 1 | 11 → 2 | 124 → 196 M/s | 17 → 49 M/s |
+| 3, 38, 1 (two-word) | 75 → 5 | 23 → 67 M/s | 2.8 → 14 M/s |
+| 3, 12, 2 | 12 → 3 | 19 → 46 M/s | 6.1 → 10.5 M/s |
 
-On CPU, Barrett reduction is 1.4× faster than the integer remainder.
+The full Lie series (`method="taylor"`) runs at 2–60 M/s on the same GPU. The laptop CPU is 30–100 times slower than the GPU. Barrett reduction is the fastest on CPU; on GPU the plain `int64` remainder is, and a `float32` quotient estimate (`"barrett32"`) does not help. Tables of 0.5–10 MB are the fastest; larger ones fall out of cache, which is why `table_size` defaults to $2^{20}$ entries.
 
 ## API
 
@@ -245,14 +249,14 @@ The following live in `diffrax.padic_flow`.
 
 | Name | What it is |
 |---|---|
-| `PAdicFlow(p, precision, field)` | The flow of a polynomial field divisible by $p$. `flow(t, x)` (`"table"` or `"taylor"`), `vector_field`, `mahler_coefficients`, `orbit_level`, `rectify` (flow-box coordinates), `orbit_time`, `first_hitting_time`, `return_time`, `orbit_average`, `event_times`, `first_event`, `equilibria`, `jacobian`, `linearization`. |
+| `PAdicFlow(p, precision, field)` | The flow of a polynomial field divisible by $p$. Options: `table_digits`, `space_digits` (default: the largest that fits `table_size`), `reduction`. `flow(t, x)` (`"table"` or `"taylor"`), `vector_field`, `mahler_coefficients`, `orbit_level`, `rectify` (flow-box coordinates), `orbit_time`, `first_hitting_time`, `return_time`, `orbit_average`, `event_times`, `first_event`, `equilibria`, `jacobian`, `linearization`. |
 | `TimeDependentFlow(p, precision, field)` | $dx/dt = f(t, x)$ from $t_0$ to $t_1 \in t_0 + p\,\mathbb{Z}_p$; the underlying autonomous flow in $(t, x)$ is `autonomous`. |
 | `PAdicEvent(condition, depth)`, `EventSet` | An event $g(\varphi_t(x)) = 0$ and its set of times: `balls`, `first()`, `measure()`, `zero_bound`, membership. |
 | `Equilibrium`, `Linearization` | Zeros of $f$ (with Hensel certificates), and linearising coordinates: `forward`, `inverse`, `flow_map`, `orbit_time`. |
 | `PAdicMap(p, map)`, `Cycle`, `Component` | Discrete maps: `cycle_tree`, `cycles(level)`, `minimal_decomposition`, `is_minimal`, `is_bijective`. |
 | `KoopmanOperator(flow, level, time=1)` | $u \mapsto u \circ \varphi_\tau$ on $(\mathbb{Z}/p^n)^d$: its cycles, and `evolve_jumps`, which computes $e^{t\kappa(U - I)}$ by an FFT along each cycle. |
 | `advection_diffusion(koopman, operator, u0, t, rate)` | The exact solution of $du/dt = Lu + \kappa(U - I)u$, with $L$ an `UltrametricOperator`. |
-| `Residues(p, precision)` | Arithmetic in $\mathbb{Z}/p^K$ on `int64` arrays: Barrett or two-word products, valuations, unit inverses by Newton's method, exact division. |
+| `Residues(p, precision, reduction)` | Arithmetic in $\mathbb{Z}/p^K$ on `int64` arrays: products reduced by `"barrett"`, `"barrett32"`, `"remainder"` or `"double"` (two-word); valuations, unit inverses by Newton's method, exact division. The default is Barrett on CPU and the plain remainder on GPU. |
 
 ## Notes and limitations
 
@@ -263,6 +267,8 @@ The following live in `diffrax.padic_flow`.
 - On $\mathbb{Z}/p^n$, `UltrametricOperator` and `KozyrevTransform` are $O(n p^n)$ and work for millions of points. A `GroupODE`, however, needs the `Group`, which stores a Cayley table of $p^{2n}$ entries. Solving with `solve_group_ode` is therefore limited to a few thousand points. `KozyrevTransform` never computes representations, and its coordinates are a single array rather than one block per representation, so it also compiles much faster than `FourierTransform` on these groups.
 - Kozyrev coefficients are complex, so a real problem is solved in $2p^n$ real coordinates.
 - The flows need 64-bit JAX (`jax_enable_x64`).
+- On Windows, JAX uses the GPU only under WSL2 (`pip install "jax[cuda12]"`). Set `XLA_PYTHON_CLIENT_PREALLOCATE=false` there, since part of the GPU memory is held by Windows.
+- On a laptop GPU the clock changes under load. Time with warm-up calls and a median, or single runs can differ by a factor of 3.
 - Precision is limited to $p^K < 2^{62}$, which is 61 digits for $p = 2$, 38 for $p = 3$, 26 for $p = 5$ and 22 for $p = 7$. Up to $p^K < 2^{31}$ (30, 19, 13 and 11 digits) one product is one machine multiplication; beyond that it is three.
 - Events, equilibria, linearisation and maps run on the host with exact Python integers. They are built from the device-side flow, but each search is sequential.
 - Linearisation is implemented for $d = 1$ only. In higher dimension, convergence needs arithmetic conditions on the eigenvalues (Herman–Yoccoz).

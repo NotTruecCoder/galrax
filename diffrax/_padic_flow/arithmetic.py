@@ -66,8 +66,12 @@ class Residues:
 
     - `p`: a prime.
     - `precision`: `K`, the number of digits.
-    - `reduction`: `"barrett"`, `"remainder"` or `"double"`. Defaults to `"barrett"`
-        when products fit in `int64`, and to `"double"` otherwise.
+    - `reduction`: `"barrett"`, `"barrett32"`, `"remainder"` or `"double"`. Defaults to
+        `"barrett"` on CPU and `"remainder"` on GPU (the faster of the two in our
+        measurements) when products fit in `int64`, and to `"double"` otherwise.
+        `"barrett32"` estimates the quotient in `float32` twice, avoiding `float64`
+        entirely; on a laptop GPU it was slower than `"barrett"`, because the cost
+        there is in the 64-bit integer products, not in `float64`.
     """
 
     def __init__(self, p: int, precision: int, reduction: str | None = None):
@@ -83,9 +87,16 @@ class Residues:
                 f"got precision = {precision}."
             )
         if reduction is None:
-            reduction = "barrett" if precision <= single else "double"
-        if reduction not in ("barrett", "remainder", "double"):
-            raise ValueError("`reduction` must be 'barrett', 'remainder' or 'double'.")
+            if precision > single:
+                reduction = "double"
+            elif jax.default_backend() == "cpu":
+                reduction = "barrett"
+            else:
+                reduction = "remainder"
+        if reduction not in ("barrett", "barrett32", "remainder", "double"):
+            raise ValueError(
+                "`reduction` must be 'barrett', 'barrett32', 'remainder' or 'double'."
+            )
         if reduction != "double" and precision > single:
             raise ValueError(
                 f"Products of {precision}-digit residues do not fit in int64 for "
@@ -102,6 +113,7 @@ class Residues:
         self.reduction = reduction
         self.powers = np.array([p**k for k in range(precision + 1)], dtype=np.int64)
         self._reciprocal = 1.0 / self.modulus
+        self._reciprocal32 = np.float32(1.0 / self.modulus)
         self._half = p ** math.ceil(precision / 2)
         self._rest = p ** (precision - math.ceil(precision / 2))
         self._inverses = np.array(
@@ -135,6 +147,15 @@ class Residues:
         a, b = jnp.broadcast_arrays(a, b)
         if self.reduction == "remainder":
             return jnp.remainder(a * b, self.modulus)
+        if self.reduction == "barrett32":
+            m, inverse = self.modulus, self._reciprocal32
+            r = a * b
+            q = jnp.floor(a.astype(jnp.float32) * b.astype(jnp.float32) * inverse)
+            r = r - q.astype(jnp.int64) * m
+            q = jnp.floor(r.astype(jnp.float32) * inverse)
+            r = r - q.astype(jnp.int64) * m
+            r = jnp.where(r < 0, r + m, r)
+            return jnp.where(r >= m, r - m, r)
         if self.reduction == "double":
             half, rest, m = self._half, self._rest, self.modulus
             a0, a1 = jnp.remainder(a, half), jnp.floor_divide(a, half)
@@ -194,4 +215,19 @@ def scan_horner(residues: Residues, coefficients, x):
 
     init = jnp.zeros(jnp.broadcast_shapes(xs.shape[1:], jnp.shape(x)), jnp.int64)
     out, _ = jax.lax.scan(step, init, xs)
+    return out
+
+
+def gather_horner(residues: Residues, table, index, x):
+    """`sum_i table[index, ..., i] x^i`, gathering row `index` one coefficient at a
+    time inside Horner's loop. `table` has shape `(rows, *rest, deg + 1)`, `index`
+    and `x` broadcast to the batch; returns `(batch, *rest)`.
+    """
+    xs = jnp.moveaxis(table, -1, 0)[::-1]
+
+    def step(acc, c):
+        return residues.add(residues.mul(acc, x), c[index]), None
+
+    shape = jnp.broadcast_shapes((index.shape[0],) + xs.shape[2:], jnp.shape(x))
+    out, _ = jax.lax.scan(step, jnp.zeros(shape, jnp.int64), xs)
     return out

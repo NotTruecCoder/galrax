@@ -73,14 +73,13 @@ def test_double_word_reduction_is_exact(p, k, reduction):
 
 @pytest.mark.parametrize("p,k", [(2, 30), (3, 19), (5, 13), (7, 11), (31, 6)])
 def test_barrett_reduction_is_exact(p, k):
-    barrett = Residues(p, k, "barrett")
-    remainder = Residues(p, k, "remainder")
-    m = barrett.modulus
-    a = np.concatenate([_random(m, 5000), [0, 1, m - 1, m - 2]])
-    b = np.concatenate([_random(m, 5000, seed=1), [m - 1, m - 1, m - 1, 2]])
-    expected = (a.astype(object) * b.astype(object)) % m
-    assert np.array_equal(np.asarray(barrett.mul(a, b)), expected.astype(np.int64))
-    assert np.array_equal(np.asarray(remainder.mul(a, b)), expected.astype(np.int64))
+    m = p**k
+    a = np.concatenate([_random(m, 20000), [0, 1, m - 1, m - 2, m // 2]])
+    b = np.concatenate([_random(m, 20000, seed=1), [m - 1, m - 1, m - 1, 2, m // 2]])
+    expected = ((a.astype(object) * b.astype(object)) % m).astype(np.int64)
+    for reduction in ("barrett", "barrett32", "remainder"):
+        res = Residues(p, k, reduction)
+        assert np.array_equal(np.asarray(res.mul(a, b)), expected), reduction
 
 
 def test_residue_operations():
@@ -210,8 +209,38 @@ def test_table_digits_do_not_change_the_result():
     for digits in (1, 2, 4, 10):
         flow = PAdicFlow(p, K, [3, 3, 3], table_digits=digits)
         assert np.array_equal(flow.flow(t, x), reference)
-    remainder = PAdicFlow(p, K, [3, 3, 3], reduction="remainder")
-    assert np.array_equal(remainder.flow(t, x), reference)
+    for reduction in ("remainder", "barrett32"):
+        flow = PAdicFlow(p, K, [3, 3, 3], reduction=reduction)
+        assert np.array_equal(flow.flow(t, x), reference)
+
+
+@pytest.mark.parametrize(
+    "p,K,field",
+    [
+        (3, 19, [3, -3, 0, 6]),
+        (5, 13, [5, 0, -5]),
+        (3, 30, [3, -3, 0, 6]),
+        (3, 9, [{(0, 1): 3, (2, 0): 3}, {(0, 0): 3, (1, 1): -6}]),
+    ],
+    ids=["p3K19", "p5K13", "p3K30", "plane"],
+)
+def test_space_reduction_is_exact(p, K, field):
+    reference = PAdicFlow(p, K, field, space_digits=0)
+    d = reference.dimension
+    x = _random(p**K, 300, *((d,) if d > 1 else ()))
+    t = _random(p**K, 300, seed=1)
+    expected = reference.flow(t, x, method="taylor")
+    z = reference.flow(t, x)
+    assert np.array_equal(z, expected)
+    s0, w0 = reference.rectify(x, z)
+    for r in (1, 2, 4, None):
+        flow = PAdicFlow(p, K, field, space_digits=r)
+        assert flow.table_degree <= reference.table_degree
+        assert np.array_equal(flow.flow(t, x), expected)
+        s, w = flow.rectify(x, z)
+        assert np.array_equal(s, s0) and np.array_equal(w, w0)
+    with pytest.raises(ValueError):
+        PAdicFlow(p, K, field, space_digits=K)
 
 
 def test_shapes_and_broadcasting():

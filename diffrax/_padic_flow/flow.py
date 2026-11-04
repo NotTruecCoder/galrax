@@ -51,6 +51,11 @@ class PAdicFlow:
         `sigma` is `p`-adically small. This costs two polynomial evaluations, in the
         spirit of table-driven `exp`.
 
+    The table method also reduces the argument in space: with `x = a + p^r y` and
+    `0 <= a < p^r`, every polynomial `P` becomes `sum_e P^{[e]}(a) p^{r |e|} y^e`, in
+    which the terms with `r |e| >= K` vanish. The polynomials are tabulated for every
+    centre `a`, so that their degree drops from about `2K` to `ceil(K / r) - 1`.
+
     For `d = 1` points are arrays of shape `(...)`; for `d > 1` they have shape
     `(..., d)`. Times and points are integers, read modulo `p^K`, and broadcast
     against each other.
@@ -65,6 +70,10 @@ class PAdicFlow:
         component, e.g. `[{(0, 1): 3}, {(1, 0): -3}]` for `(3y, -3x)`. Coefficients
         are integers or fractions with denominators prime to `p`.
     - `table_digits`: `J`. Defaults to the largest `J` with `p^J <= 32`.
+    - `space_digits`: `r`, the number of digits of the centres. Defaults to the
+        largest `r` whose tables hold at most `table_size` numbers; `0` disables the
+        reduction.
+    - `table_size`: the budget for `space_digits`, in `int64` entries.
     - `reduction`: `"barrett"`, `"remainder"` or `"double"`; chosen automatically by
         default, see `Residues`.
     """
@@ -76,6 +85,8 @@ class PAdicFlow:
         field,
         *,
         table_digits: int | None = None,
+        space_digits: int | None = None,
+        table_size: int = 2**20,
         reduction: str | None = None,
     ):
         residues = Residues(p, precision, reduction)
@@ -115,7 +126,7 @@ class PAdicFlow:
         tail = _terms(p, K, rate + table_digits)
         tail_degree = max(degree(polys) for polys in taylor[:tail])
         self.tail_terms = tail
-        self._tail = self._taylor[
+        tail_polys = self._taylor[
             (slice(0, tail), slice(None)) + (slice(0, tail_degree + 1),) * d
         ]
 
@@ -124,7 +135,61 @@ class PAdicFlow:
         table = jnp.zeros((size,) + self._taylor.shape[1:], dtype=jnp.int64)
         for coefficients in self._taylor[::-1]:
             table = residues.add(residues.mul(table, s), jnp.asarray(coefficients))
-        self._table = np.asarray(table)
+
+        def entries(r):
+            head = min(self.degree, -(-K // r) - 1)
+            low = min(tail_degree, -(-K // r) - 1)
+            centres = p ** (r * d)
+            return centres * d * (size * (head + 1) ** d + tail * (low + 1) ** d)
+
+        if space_digits is None:
+            space_digits = 0
+            for r in range(1, K):
+                if entries(r) > table_size:
+                    break
+                space_digits = r
+        space_digits = int(space_digits)
+        if not 0 <= space_digits < K:
+            raise ValueError(f"`space_digits` must lie in 0, ..., {K - 1}.")
+        self.space_digits = space_digits
+        table = np.asarray(self._recenter(table, space_digits))
+        self.table_degree = table.shape[-1] - 1
+        self._table = table.reshape((-1,) + table.shape[2:])
+        tail = np.asarray(self._recenter(jnp.asarray(tail_polys), space_digits))
+        self._tail = np.moveaxis(tail, 1, 0)
+
+    def _recenter(self, coefficients, r: int):
+        """Dense polynomials of shape `(L, *rest, deg + 1, ..., deg + 1)` re-expanded
+        around every centre `a` in `(Z/p^r)^d`: `y -> P(a + p^r y)`, of shape
+        `(L, p^{rd}, *rest, deg' + 1, ..., deg' + 1)` with `deg' = ceil(K/r) - 1`.
+        """
+        res, p, K, d = self.residues, self.p, self.precision, self.dimension
+        out = jnp.asarray(coefficients)
+        if r == 0:
+            return out[:, None]
+        centres = jnp.arange(p**r, dtype=jnp.int64)
+        deg = out.shape[-1] - 1
+        new = min(deg, -(-K // r) - 1)
+        powers = [jnp.ones_like(centres)]
+        for _ in range(deg):
+            powers.append(res.mul(powers[-1], centres))
+        for axis in range(d):
+            position = out.ndim - d + axis
+            moved = jnp.moveaxis(out, position, -1)
+            pieces = []
+            for e in range(new + 1):
+                total = jnp.zeros(moved.shape[:-1] + (p**r,), dtype=jnp.int64)
+                for f in range(e, deg + 1):
+                    weight = res.mul(powers[f - e], math.comb(f, e) % self.modulus)
+                    total = res.add(total, res.mul(moved[..., f, None], weight))
+                scale = pow(p, r * e, self.modulus) if r * e < K else 0
+                pieces.append(res.mul(total, scale))
+            shifted = jnp.stack(pieces, axis=-1)
+            out = jnp.moveaxis(shifted, (-2, -1), (1 + axis, position + 1))
+        lead = out.shape[0]
+        centre_axes = out.shape[1 : 1 + d]
+        rest = out.shape[1 + d :]
+        return out.reshape((lead, math.prod(centre_axes)) + rest)
 
     def _divided_series(self, start):
         """`[g, Dg, D^2 g / 2!, ...]` modulo `p^K`, `self.terms` entries, for the
@@ -198,6 +263,31 @@ class PAdicFlow:
     # The flow
     #
 
+    def _split(self, x):
+        """Centre index and reduced coordinates: `x = a + p^r y`."""
+        r = self.space_digits
+        if r == 0:
+            return jnp.zeros(x.shape[0], dtype=jnp.int64), x
+        scale = self.p**r
+        digits = jnp.remainder(x, scale)
+        weights = jnp.asarray(
+            [scale ** (self.dimension - 1 - j) for j in range(self.dimension)],
+            dtype=jnp.int64,
+        )
+        index = (digits * jnp.broadcast_to(weights, digits.shape)).sum(axis=-1)
+        return index, jnp.floor_divide(x, scale)
+
+    def _small_flow(self, sigma, x, digits: int):
+        """`phi_sigma(x)` for `sigma` divisible by `p^digits`, `digits >= J`: only the
+        Lie terms that survive such a small time are used.
+        """
+        res = self.residues
+        rate = self.field_valuation + digits
+        terms = min(self.tail_terms, _terms(self.p, self.precision, rate))
+        centre, y = self._split(x)
+        values = evaluate(res, jnp.asarray(self._tail[:, :terms]), y, centre)
+        return scan_horner(res, jnp.moveaxis(values, 1, -1), sigma[:, None])
+
     def _flow(self, t, x, method: str = "table"):
         res = self.residues
         if method == "taylor":
@@ -207,9 +297,10 @@ class PAdicFlow:
             raise ValueError("`method` must be 'table' or 'taylor'.")
         low = jnp.remainder(t, self.p**self.table_digits)
         sigma = res.sub(t, low)
-        y = evaluate(res, jnp.asarray(self._table)[low], x)
-        values = evaluate(res, self._tail[None], y)
-        return scan_horner(res, jnp.moveaxis(values, 1, -1), sigma[:, None])
+        centre, y = self._split(x)
+        row = low * self.p ** (self.space_digits * self.dimension) + centre
+        middle = evaluate(res, jnp.asarray(self._table), y, row)
+        return self._small_flow(sigma, middle, self.table_digits)
 
     def flow(self, t, x, method: str = "table"):
         """`phi_t(x)` modulo `p^K`."""
@@ -272,14 +363,18 @@ class PAdicFlow:
         x_axis = jnp.take_along_axis(x, axis[:, None], axis=1)[:, 0]
         time = jnp.zeros(x.shape[0], dtype=jnp.int64)
         foot = z
-        for _ in range(math.ceil(math.log2(K)) + 2):
+        for j in range(math.ceil(math.log2(K)) + 2):
             value = jnp.take_along_axis(foot, axis[:, None], axis=1)[:, 0]
             slope = jnp.take_along_axis(
                 self._vector_field(foot), axis[:, None], axis=1
             )[:, 0]
             step = res.divide(res.sub(value, x_axis), slope, level)
             time = jnp.remainder(res.add(time, step), powers[K - level])
-            foot = self._flow(res.neg(time), z)
+            small = 2**j - 1
+            if small >= self.table_digits:
+                foot = self._small_flow(res.neg(step), foot, small)
+            else:
+                foot = self._flow(res.neg(time), z)
         return time, foot, level
 
     def rectify(self, x, z):
