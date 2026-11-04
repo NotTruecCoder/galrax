@@ -397,11 +397,7 @@ class NormalForm:
     def _shape(self, out, single):
         if self.dimension == 1:
             out = out[:, 0]
-            return out[0] if single else out
         return out[0] if single else out
-
-    def _phi_values(self, z, modulus):
-        return (z + _evaluate(self._phi, z, modulus)) % modulus
 
     def forward(self, x):
         """`z = Phi^{-1}((x - x*) / p^r)`, the normal-form coordinates of `x`, by the
@@ -425,7 +421,8 @@ class NormalForm:
         z, single = self._points(z)
         p, K, r = self.p, self.precision, self.radius
         modulus = p**K
-        x = np.array(self._centre, dtype=object) + p**r * self._phi_values(z, modulus)
+        image = z + _evaluate(self._phi, z, modulus)
+        x = np.array(self._centre, dtype=object) + p**r * image
         return self._shape(x % modulus, single)
 
     def flow_map(self, t, x):
@@ -443,18 +440,12 @@ class NormalForm:
     def exponential(self, t) -> list[list[int]]:
         """`e^{At}` modulo `p^K`, the flow of the linear part."""
         p, K, d = self.p, self.precision, self.dimension
-        modulus = p**K
         t = int(t)
-        guard = K
-        while True:
-            terms = 1
-            while (
-                terms * self._valuation_of_matrix() - factorial_valuation(terms, p) < K
-            ):
-                terms += 1
-            if terms < guard:
-                break
-            guard *= 2
+        entries = [c for row in self.matrix for c in row if c]
+        rate = min((valuation(c, p, K) for c in entries), default=K)
+        terms = 1
+        while terms * rate - (terms - 1) // (p - 1) < K:
+            terms += 1
         big = p ** (K + factorial_valuation(terms, p))
         total = [[int(i == j) for j in range(d)] for i in range(d)]
         power = [row[:] for row in total]
@@ -466,19 +457,12 @@ class NormalForm:
                 ]
                 for i in range(d)
             ]
-            factorial = math.factorial(n)
-            v = valuation(factorial, p, 10**9)
-            inverse = pow(factorial // p**v, -1, big)
+            v = factorial_valuation(n, p)
+            inverse = pow(math.factorial(n) // p**v, -1, big)
             for i in range(d):
                 for j in range(d):
                     total[i][j] += power[i][j] // p**v * inverse
-        return [[c % modulus for c in row] for row in total]
-
-    def _valuation_of_matrix(self) -> int:
-        values = [c for row in self.matrix for c in row if c]
-        if not values:
-            return self.precision
-        return min(valuation(c, self.p, self.precision) for c in values)
+        return [[c % p**K for c in row] for row in total]
 
     def __repr__(self) -> str:
         kind = "linearizable" if self.linearizable else "resonant"

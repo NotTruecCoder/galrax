@@ -228,20 +228,26 @@ The full Lie series (`method="taylor"`) runs at 2–60 M/s on the same GPU. On t
 
 ## Pictures of p-adic dynamics
 
-$\mathbb{Z}_p$ is drawn in two ways. The **Monna map** $\sum a_k p^k \mapsto \sum a_k p^{-k-1}$ sends it onto $[0, 1]$, with balls becoming intervals. The **fractal embedding** $\sum a_k p^k \mapsto \sum \omega^{a_k} \rho^k$, with $\omega = e^{2\pi i/p}$, sends it into the plane, with balls becoming nested clusters (a Sierpinski triangle for $p = 3$). `examples/padic_figures.py` draws all of the figures below.
+$\mathbb{Z}_p$ is drawn in two ways. The **Monna map** $\sum a_k p^k \mapsto \sum a_k p^{-k-1}$ sends it onto $[0, 1]$, with balls becoming intervals. The **fractal embedding** $\sum a_k p^k \mapsto \sum \omega^{a_k} \rho^k$, with $\omega = e^{2\pi i/p}$, sends it into the plane, with balls becoming nested clusters: a square for $p = 2$ (two digits at a time), a Sierpinski triangle for $p = 3$, pentagons and heptagons for $p = 5, 7$. `examples/padic_figures.py` draws every figure below for $p = 2, 3, 5, 7$; the fields are $dx/dt = c - cx + 2cx^3$ on $\mathbb{Z}_p$ and $dx/dt = cy$, $dy/dt = -cx + cx^2$ on $\mathbb{Z}_p^2$, with $c = p$ ($c = 4$ for $p = 2$).
+
+![](imgs/padic/fractal_orbits.png)
+
+One orbit of the first field for each prime: a whole cluster, that is, a ball.
 
 | | |
 |---|---|
-| ![](imgs/padic/trajectory_monna.png) | ![](imgs/padic/trajectory_fractal.png) |
-| The graph of $t \mapsto \varphi_t(x)$ for $dx/dt = 3 - 3x + 6x^3$, both axes in Monna coordinates. The orbit of $0$ fills a band of height $1/3$, and that of $2$ a band of height $1/9$: $t \mapsto \varphi_t(x)$ is a similarity of ratio $\lvert f(x) \rvert_3$. | The orbit of $2$ on the fractal picture of $\mathbb{Z}/3^6$, coloured by time: a whole sub-triangle, that is, a ball. |
-| ![](imgs/padic/phase_monna.png) | ![](imgs/padic/phase_fractal.png) |
-| The phase portrait of $dx/dt = 3y$, $dy/dt = -3x + 3x^2$ on $\mathbb{Z}_3^2$. Each point is coloured by the leaf of the flow-box foliation through it, so orbits are the sets of one colour; the equilibria $(0, 0)$ and $(1, 0)$ are black. | The same on the fractal picture of $\mathbb{Z}_3^2$. |
-| ![](imgs/padic/advection_monna.png) | ![](imgs/padic/advection_fractal.png) |
-| $du/dt = -D^{1/2} u + 2(U - I) u$ from the indicator of a small ball: the jumps along the flow move the mass across its orbit ball, and diffusion spreads it over $\mathbb{Z}_3$ (logarithmic colour scale). | The same at four times. |
-| ![](imgs/padic/kozyrev_monna.png) | ![](imgs/padic/kozyrev_fractal.png) |
-| The Kozyrev wavelets $\psi_{m,0,1}$, one per level, as step functions on $[0, 1]$. | The same, coloured by phase; each lives on a ball of radius $3^{-m}$. |
+| ![](imgs/padic/p3_trajectory.png) | ![](imgs/padic/p5_trajectory.png) |
+| The graph of $t \mapsto \varphi_t(x)$ in Monna coordinates for $p = 3$, over the grid of balls of radius $1/p$ and $1/p^2$. Each orbit fills the shaded band of height exactly $\lvert f(x) \rvert_p$: $t \mapsto \varphi_t(x)$ is a similarity of that ratio. | The same for $p = 5$, with orbits of radius $5^{-1}$, $5^{-2}$ and $5^{-3}$. |
+| ![](imgs/padic/p3_phase.png) | ![](imgs/padic/p5_phase.png) |
+| The phase portrait on $\mathbb{Z}_3^2$: eight orbits of $\varphi_1$ modulo $3^4$, over the scale $v_3(f)$ of the orbits in light shades. The equilibria $(0, 0)$ and $(1, 0)$, with the balls on which $f$ vanishes to this precision, are black. | The same on $\mathbb{Z}_5^2$ modulo $5^3$. |
+| ![](imgs/padic/p3_phase_fractal.png) | ![](imgs/padic/p5_speed.png) |
+| The orbits of $\mathbb{Z}_3^2$ on its fractal picture, a nonagon of nonagons. | $v_5(f(x))$ on $\mathbb{Z}_5^2$, the scale of the orbit through each point. |
+| ![](imgs/padic/p3_advection.png) | ![](imgs/padic/p5_advection.png) |
+| $du/dt = -D^{1/2} u + 2(U - I) u$ from the indicator of a small ball: the jumps along the flow move the mass across its orbit ball, and diffusion spreads it over $\mathbb{Z}_3$ (logarithmic colour scale, white lines at the balls of radius $1/p$ and $1/p^2$). | The same on $\mathbb{Z}_5$. |
+| ![](imgs/padic/p3_kozyrev.png) | ![](imgs/padic/p5_kozyrev_fractal.png) |
+| The Kozyrev wavelets $\psi_{m,0,1}$, one per level, on $[0, 1]$: each lives on the shaded interval, a ball of radius $p^{-m}$. | The wavelets of $\mathbb{Z}_5$ on its fractal picture, coloured by phase. |
 
-`plot_phase_portrait(flow, level, colour="speed")` colours by $v_p(f(x))$ instead, the scale of the orbit through $x$.
+The remaining pictures (all four primes, close-ups of the orbits, `colour="leaves"` for the flow-box foliation) are in `imgs/padic/`.
 
 ## API
 
@@ -282,7 +288,7 @@ The following live in `diffrax.padic_flow`.
 | `PAdicMap(p, map)`, `Cycle`, `Component` | Discrete maps: `cycle_tree`, `cycles(level)`, `minimal_decomposition`, `is_minimal`, `is_bijective`. |
 | `KoopmanOperator(flow, level, time=1)` | $u \mapsto u \circ \varphi_\tau$ on $(\mathbb{Z}/p^n)^d$: its cycles, and `evolve_jumps`, which computes $e^{t\kappa(U - I)}$ by an FFT along each cycle. |
 | `advection_diffusion(koopman, operator, u0, t, rate)` | The exact solution of $du/dt = Lu + \kappa(U - I)u$, with $L$ an `UltrametricOperator`. |
-| `plot_trajectory`, `plot_phase_portrait`, `plot_advection_diffusion` | Pictures of orbits, phase portraits and advection–diffusion, in Monna coordinates or on the fractal picture (needs matplotlib). |
+| `plot_trajectory`, `plot_phase_portrait`, `plot_advection_diffusion` | Pictures of orbits, phase portraits (selected orbits, flow-box leaves or orbit scales) and advection–diffusion, in Monna coordinates or on the fractal picture (needs matplotlib). |
 | `Residues(p, precision, reduction)` | Arithmetic in $\mathbb{Z}/p^K$ on `int64` arrays: products reduced by `"barrett"`, `"barrett32"`, `"remainder"` or `"double"` (two-word); valuations, unit inverses by Newton's method, exact division. The default is the plain remainder. |
 | `PowerSeries(coefficient, bound, dimension)` | An analytic field component; `exp`, `log1p`, `geometric`, `polynomial`, `variable`, sums and products. |
 | `Limbs(p, precision)` | The same for any number of digits, with residues stored as `int64` limbs along a trailing axis; `decode` returns Python integers. |
