@@ -7,7 +7,13 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import scipy.linalg
-from diffrax._padic_flow.arithmetic import simplex, simplex_horner, simplex_size
+from diffrax._padic_flow.arithmetic import (
+    simplex,
+    simplex_horner,
+    simplex_size,
+    valuation,
+)
+from diffrax._padic_flow.normal_form import _monomials, homological_matrix, smith
 from diffrax.padic_flow import (
     advection_diffusion,
     Equilibrium,
@@ -1084,6 +1090,73 @@ def test_normal_form_sufficient_radius():
     form = flow.normal_form((0, 0), radius=4)
     assert form.radius == 4 and form.certificate.verify()
     assert _conjugates(flow, form)
+
+
+def test_normal_form_removes_cheap_large_divisors():
+    # A Jordan block: some divisors exceed the threshold, but their numerators are
+    # divisible enough that removing them costs nothing.
+    field = [
+        {(1, 0): 3, (0, 1): 3, (2, 1): -3, (1, 1): -3, (3, 0): 6},
+        {(0, 1): 3, (1, 1): -3, (3, 0): 27, (0, 3): 6},
+    ]
+    flow = PAdicFlow(3, 8, field)
+    form = flow.normal_form((0, 0))
+    work = form.precision + form.resonance_digits + 2
+    large = [s for exponents in form.divisors.values() for s in exponents]
+    assert any(form.resonance_digits < s < work for s in large)
+    assert form.linearizable and form.certificate.verify()
+    assert _conjugates(flow, form)
+
+
+def _matching_exponents(t, weights):
+    """Increments of the least weights of the matchings of each size in the path
+    with edge weights `t, w_1, t, w_2, ..., w_k, t`.
+    """
+    edges = [t]
+    for w in weights:
+        edges += [w, t]
+    best = {(0, False): 0}
+    for x in edges:
+        new = {}
+        for (size, taken), value in best.items():
+            options = [((size, False), value)]
+            if not taken:
+                options.append(((size + 1, True), value + x))
+            for key, total in options:
+                new[key] = min(new.get(key, total), total)
+        best = new
+    least = [
+        min(v for (size, _), v in best.items() if size == j)
+        for j in range(len(weights) + 2)
+    ]
+    return [b - a for a, b in zip(least, least[1:])]
+
+
+def test_smith_exponents_of_planar_jordan_blocks():
+    # p odd and p not dividing n + 1: L_n splits over binary forms of degrees n + 1
+    # and n - 1, on which it is a weighted chain whose exponents are matchings.
+    def v(x, p):
+        return valuation(x, p, 100)
+
+    for p, lam, mu in [(3, 3, 3), (3, 9, 3), (3, 3, 1), (5, 5, 5), (5, 25, 1)]:
+        a = v(mu, p)
+        for n in range(2, 13):
+            if (n + 1) % p == 0:
+                continue
+            L = homological_matrix([[lam, mu], [0, lam]], _monomials(2, n))
+            got = sorted(smith(L % p**60, p, 60)[3])
+            nu = v((n - 1) * lam, p)
+            if nu <= a:
+                want = [nu] * (2 * n + 2)
+            else:
+                want = sorted(
+                    a + s
+                    for k in (n + 1, n - 1)
+                    for s in _matching_exponents(
+                        nu - a, [v(j, p) for j in range(k, 0, -1)]
+                    )
+                )
+            assert got == want
 
 
 def test_normal_form_validation():

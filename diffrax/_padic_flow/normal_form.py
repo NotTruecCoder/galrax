@@ -87,6 +87,29 @@ def _monomials(d: int, n: int) -> list[tuple[int, ...]]:
     return [(k,) + rest for k in range(n, -1, -1) for rest in _monomials(d - 1, n - k)]
 
 
+def homological_matrix(matrix, monomials) -> np.ndarray:
+    """The matrix of `L_A Phi = DPhi . Az - A Phi` on homogeneous vector polynomials,
+    in the basis `z^e eps_i` ordered by `i` and then as `monomials`.
+    """
+    d, size = len(matrix), len(monomials)
+    index = {e: k for k, e in enumerate(monomials)}
+    L = np.zeros((d * size, d * size), dtype=object)
+    for i in range(d):
+        for k, e in enumerate(monomials):
+            column = i * size + k
+            for j in range(d):
+                if not e[j]:
+                    continue
+                for l in range(d):
+                    f = list(e)
+                    f[j] -= 1
+                    f[l] += 1
+                    L[i * size + index[tuple(f)], column] += e[j] * matrix[j][l]
+            for row in range(d):
+                L[row * size + k, column] -= matrix[row][i]
+    return L
+
+
 def _multiply(a: dict, b: dict, degree: int, m: int) -> dict:
     out = {}
     for ea, ca in a.items():
@@ -434,24 +457,8 @@ class NormalForm:
     def _operator(self, n: int, matrix, monomials, digits: int):
         key = (n, digits)
         if key not in self._smith:
-            p, d = self.p, self.dimension
-            index = {e: k for k, e in enumerate(monomials)}
-            size = len(monomials)
-            L = np.zeros((d * size, d * size), dtype=object)
-            for i in range(d):
-                for k, e in enumerate(monomials):
-                    column = i * size + k
-                    for j in range(d):
-                        if not e[j]:
-                            continue
-                        for l in range(d):
-                            f = list(e)
-                            f[j] -= 1
-                            f[l] += 1
-                            L[i * size + index[tuple(f)], column] += e[j] * matrix[j][l]
-                    for row in range(d):
-                        L[row * size + k, column] -= matrix[row][i]
-            self._smith[key] = smith(L % p**digits, p, digits)
+            L = homological_matrix(matrix, monomials)
+            self._smith[key] = smith(L % self.p**digits, self.p, digits)
         return self._smith[key]
 
     def _build(self, centre, r: int, work: int, threshold: int, top: int):
@@ -513,13 +520,26 @@ class NormalForm:
             c = left @ target % m
             solution = np.zeros(d * size, dtype=object)
             kept = np.zeros(d * size, dtype=object)
+            costly = []
             for k, (value, v) in enumerate(zip(c, s)):
+                if not value:
+                    continue
                 if v > threshold:
-                    kept[k] = value
+                    costly.append(k)
                 elif value % p**v:
                     raise _Retry
                 else:
                     solution[k] = int(value) // p**v
+            # The cost of a division is fixed by the pair: a large divisor costs
+            # nothing when the quotient is as divisible as the ordinary ones.
+            quotients = [valuation(int(q), p, work) for q in solution if q]
+            level = min(quotients, default=work)
+            for k in costly:
+                value, v = int(c[k]), s[k]
+                if v < work and valuation(value, p, work) - v >= level:
+                    solution[k] = value // p**v
+                else:
+                    kept[k] = value
             divisors[n] = sorted(s)
             new_phi = right @ solution % m
             new_rest = left_inverse @ kept % m
