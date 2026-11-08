@@ -1,4 +1,5 @@
 import math
+from fractions import Fraction
 
 import numpy as np
 
@@ -96,6 +97,28 @@ def _multiply(a: dict, b: dict, degree: int, m: int) -> dict:
     return {e: c for e, c in out.items() if c}
 
 
+def _substitute(poly: dict, maps: list[dict], degree: int, m: int) -> dict:
+    """`poly(maps)` up to total degree `degree`, modulo `m`, for polynomial maps
+    without constant term.
+    """
+    d = len(maps)
+    one = (0,) * d
+    powers = [[{one: 1}] for _ in range(d)]
+    out = {}
+    for e, c in poly.items():
+        if sum(e) > degree:
+            continue
+        term = {one: c % m}
+        for j, k in enumerate(e):
+            while len(powers[j]) <= k:
+                powers[j].append(_multiply(powers[j][-1], maps[j], degree, m))
+            if k:
+                term = _multiply(term, powers[j][k], degree, m)
+        for f, value in term.items():
+            out[f] = (out.get(f, 0) + value) % m
+    return {f: c for f, c in out.items() if c}
+
+
 def _evaluate(polys: list[dict], points: np.ndarray, m: int) -> np.ndarray:
     """Polynomials with integer coefficients at points of shape `(B, d)`, modulo `m`,
     with Python integers.
@@ -111,6 +134,159 @@ def _evaluate(polys: list[dict], points: np.ndarray, m: int) -> np.ndarray:
             total = total + term
         out[:, i] = total % m
     return out
+
+
+def _scaled_field(source, p: int, centre, r: int, digits: int) -> list[dict]:
+    """`f~(z) = p^{-r} f(centre + p^r z)` modulo `p^digits`, one dictionary per
+    component, constant terms included. `centre` must hold at least `digits + r`
+    digits.
+    """
+    big = p ** (digits + r)
+    m = p**digits
+    out = []
+    for component in reduce(parse_field(source, p, digits=digits + r), big):
+        shifted = taylor_shift(component, centre, big)
+        scaled = {}
+        for e, c in shifted.items():
+            n = sum(e)
+            if n == 0:
+                if c % p**r:
+                    raise ValueError("The centre is not an equilibrium of the field.")
+                value = c // p**r % m
+            else:
+                value = c * p ** (r * (n - 1)) % m
+            if value:
+                scaled[e] = value
+        out.append(scaled)
+    return out
+
+
+def _degree_valuations(polys: list[dict], p: int, digits: int) -> dict[int, int]:
+    """The least valuation of the coefficients of each degree `>= 2`, among those
+    that do not vanish modulo `p^digits`.
+    """
+    out = {}
+    for poly in polys:
+        for e, c in poly.items():
+            n = sum(e)
+            if n >= 2 and c % p**digits:
+                out[n] = min(out.get(n, digits), valuation(c, p, digits))
+    return out
+
+
+def _majorant(phi, normal, field, p: int, K: int, degree: int):
+    """The integer `b` and the slope `eta` that make the tail bound of
+    `Certificate` reach `K` at `degree`, or `None`: the largest `b + eta degree` over
+    `b = 0, ..., K` with `eta > 0`, `v(Phi_n) >= eta (n - 1)`,
+    `v(R_n) >= b + eta (n - 1)` and `v(f~_n) >= b + eta (n - 1)`.
+    """
+    vphi = _degree_valuations(phi, p, K)
+    vrest = _degree_valuations(normal, p, K)
+    vfield = _degree_valuations(field, p, K)
+    if not (vphi or vrest or vfield):
+        return K, Fraction(1)
+    best = None
+    for b in range(K + 1):
+        bounds = [Fraction(v, n - 1) for n, v in vphi.items()] + [
+            Fraction(v - b, n - 1)
+            for table in (vrest, vfield)
+            for n, v in table.items()
+        ]
+        eta = min(bounds)
+        if eta <= 0:
+            break
+        reach = b + eta * degree
+        if reach >= K and (best is None or reach > best[0]):
+            best = (reach, b, eta)
+    return None if best is None else best[1:]
+
+
+class Certificate:
+    """A checkable proof that a `NormalForm` is exact. Let `Phi` and `N` be the
+    computed polynomials (coefficients reduced modulo `p^K`, degree at most `M`) and
+    `f~(z) = p^{-r} f(c + p^r z)` the field around the centre `c`. If
+
+    1. `Phi = z + H` with every coefficient of `H` divisible by `p`, and `N` and `f~`
+       have coefficients divisible by `p` (`4` for `p = 2`);
+    2. the defect `E = DPhi . N - f~ o Phi` vanishes modulo `p^K` in every degree
+       `n <= M`;
+    3. `v(Phi_n) >= eta (n - 1)`, `v(N_n) >= b + eta (n - 1)` and
+       `v(f~_n) >= b + eta (n - 1)` for `n >= 2`, with `b + eta M >= K`,
+
+    then the parts of `E` of degree above `M` vanish modulo `p^K` as well, and
+
+    `phi_t(x) = c + p^r Phi(psi_t(Phi^{-1}((x - c) / p^r)))`  modulo `p^{K + r}`
+
+    for every `t` in `Z_p` and every `x` with `|x - c| <= p^{-r}`, where `psi_t` is
+    the flow of `N`. `verify` checks 1-3 from the field itself, independently of the
+    construction; the analytic tail of a `PowerSeries` field enters only through its
+    declared `bound`.
+
+    **Attributes:** `precision` (`K`), `radius` (`r`), `centre` (`c`, to `K + r`
+    digits), `degree` (`M`), `margin` (`b`) and `slope` (`eta`, a `Fraction`).
+    """
+
+    def __init__(self, form, degree: int, margin: int, slope: Fraction):
+        self._form = form
+        self.p, self.precision = form.p, form.precision
+        self.radius = form.radius
+        self.centre = tuple(
+            int(c) % form.p ** (form.precision + form.radius) for c in form._centre
+        )
+        self.degree = int(degree)
+        self.margin = int(margin)
+        self.slope = Fraction(slope)
+
+    def verify(self) -> bool:
+        """Checks conditions 1-3 with exact integer arithmetic."""
+        form = self._form
+        p, K, r, M = self.p, self.precision, self.radius, self.degree
+        d = form.dimension
+        m = p**K
+        needed = 2 if p == 2 else 1
+        field = _scaled_field(form.flow._source, p, self.centre, r, K)
+        normal = form.normal_form
+        phi = [
+            {**{tuple(int(i == j) for i in range(d)): 1}, **component}
+            for j, component in enumerate(form.transformation)
+        ]
+        for j in range(d):
+            terms = list(form.transformation[j]) + list(normal[j])
+            if any(sum(e) < 1 or sum(e) > M for e in terms):
+                return False
+            if any(sum(e) < 2 or c % p for e, c in form.transformation[j].items()):
+                return False
+            values = list(normal[j].values()) + list(field[j].values())
+            if any(c % p**needed for c in values):
+                return False
+        if self.slope <= 0 or self.margin + self.slope * M < K:
+            return False
+        tables = (
+            (_degree_valuations(form.transformation, p, K), 0),
+            (_degree_valuations(normal, p, K), self.margin),
+            (_degree_valuations(field, p, K), self.margin),
+        )
+        for table, offset in tables:
+            if any(v < offset + self.slope * (n - 1) for n, v in table.items()):
+                return False
+        for i in range(d):
+            defect = {}
+            for b in range(d):
+                product = _multiply(_derivative(phi[i], b, m), normal[b], M, m)
+                for e, c in product.items():
+                    defect[e] = (defect.get(e, 0) + c) % m
+            for e, c in _substitute(field[i], phi, M, m).items():
+                defect[e] = (defect.get(e, 0) - c) % m
+            if any(defect.values()):
+                return False
+        return True
+
+    def __repr__(self) -> str:
+        return (
+            f"Certificate(p={self.p}, precision={self.precision}, "
+            f"radius={self.radius}, degree={self.degree}, margin={self.margin}, "
+            f"slope={self.slope})"
+        )
 
 
 class NormalForm:
@@ -140,12 +316,15 @@ class NormalForm:
         exact either way; the threshold only trades the size of the domain against the
         number of terms left in the normal form.
 
-    The coordinates are scaled, `x - x* = p^r z`, with `r` (the `radius`) the smallest
-    value for which every division by `p^{s_i}` is exact and the coefficients decay:
-    the conjugacy holds on the ball `|x - x*| <= p^{-r}`. The series are cut at the
-    degree beyond which the observed decay `v >= e (n - 1)` of the coefficients
-    passes the working precision. The normal form is a polynomial field divisible by
-    `p`, so its flow is computed exactly by a `PAdicFlow`.
+    The coordinates are scaled, `x - x* = p^r z`. The radius `r` is the smallest one
+    for which the construction is certified, and the series are cut at the first
+    degree `M` at which they are: the result carries a `Certificate`, checked when it
+    is built, that proves the flow through the normal form exact modulo `p^K` on the
+    ball `|x - x*| <= p^{-r}`. Every degree is solved exactly modulo the working
+    power of `p`, so no digits are lost in the recursion; the tail beyond `M` is
+    bounded from the valuations of the computed coefficients. The normal form is a
+    polynomial field divisible by `p`, so its flow is computed exactly by a
+    `PAdicFlow`.
 
     **Arguments:**
 
@@ -189,7 +368,7 @@ class NormalForm:
             field = parse_field(flow._source, p, digits=work + r + 2)
             centre = self._refine(field, point, work + r + 2)
             try:
-                self._build(field, centre, r, work, threshold, max_degree)
+                self._build(centre, r, work, threshold, max_degree)
                 break
             except _Retry:
                 continue
@@ -216,6 +395,9 @@ class NormalForm:
             {e: c % modulus for e, c in component.items() if c % modulus}
             for component in self._phi
         ]
+        self.certificate = Certificate(self, self.degree, *self._majorant)
+        if not self.certificate.verify():
+            raise RuntimeError("The normal form failed its own certificate.")
         self._normal_flow = PAdicFlow(p, K, normal)
 
     #
@@ -272,32 +454,22 @@ class NormalForm:
             self._smith[key] = smith(L % p**digits, p, digits)
         return self._smith[key]
 
-    def _build(self, field, centre, r: int, work: int, threshold: int, top: int):
+    def _build(self, centre, r: int, work: int, threshold: int, top: int):
         p, K, d = self.p, self.precision, self.dimension
         m = p**work
-        big = p ** (work + r + 2)
-        scaled = []
-        for component in reduce(field, big):
-            shifted = taylor_shift(component, centre, big)
-            if shifted.get((0,) * d, 0) % p ** (work + r):
-                raise ValueError("The equilibrium is not exact enough.")
-            scaled.append(
-                {
-                    e: c * p ** (r * (sum(e) - 1)) % m
-                    for e, c in shifted.items()
-                    if sum(e) >= 1 and c * p ** (r * (sum(e) - 1)) % m
-                }
-            )
+        try:
+            scaled = _scaled_field(self.flow._source, p, centre, r, work)
+        except ValueError:
+            raise ValueError("The equilibrium is not exact enough.") from None
+        if any(f.get((0,) * d, 0) for f in scaled):
+            raise ValueError("The equilibrium is not exact enough.")
         unit = [tuple(int(i == j) for i in range(d)) for j in range(d)]
         matrix = [[scaled[i].get(unit[j], 0) for j in range(d)] for i in range(d)]
         nonlinear = [{e: c for e, c in f.items() if sum(e) >= 2} for f in scaled]
-        reach = max(
-            (sum(e) for f in nonlinear for e, c in f.items() if c % p**K), default=2
-        )
+        field = [{e: c % p**K for e, c in f.items() if c % p**K} for f in scaled]
         phi = [dict() for _ in range(d)]
         rest = [dict() for _ in range(d)]
         divisors = {}
-        lowest = []
         for n in range(2, top + 1):
             monomials = _monomials(d, n)
             size = len(monomials)
@@ -351,33 +523,30 @@ class NormalForm:
             divisors[n] = sorted(s)
             new_phi = right @ solution % m
             new_rest = left_inverse @ kept % m
-            smallest = K
             for i in range(d):
                 for k, e in enumerate(monomials):
                     a, b = int(new_phi[i * size + k]), int(new_rest[i * size + k])
                     if a:
                         phi[i][e] = a
-                        if a % p**K:
-                            v = valuation(a, p, K)
-                            if v < 1:
-                                raise _Retry
-                            smallest = min(smallest, v)
+                        if a % p:
+                            raise _Retry
                     if b:
                         rest[i][e] = b
-                        if b % p**K:
-                            v = valuation(b, p, K)
-                            if v < self._needed:
-                                raise _Retry
-                            smallest = min(smallest, v)
-            lowest.append(smallest)
-            slope = min(v / (k + 1) for k, v in enumerate(lowest))
-            if n >= reach and slope * n >= K:
+                        if b % p**self._needed:
+                            raise _Retry
+            reduced_phi = [{e: c % p**K for e, c in f.items() if c % p**K} for f in phi]
+            reduced_rest = [
+                {e: c % p**K for e, c in f.items() if c % p**K} for f in rest
+            ]
+            found = _majorant(reduced_phi, reduced_rest, field, p, K, n)
+            if found is not None:
                 break
         else:
             raise _Retry
         self.matrix = [[c % p**K for c in row] for row in matrix]
         self.divisors = divisors
         self.degree = n
+        self._majorant = found
         self._phi = phi
         self._normal = [
             {**{unit[j]: matrix[i][j] for j in range(d) if matrix[i][j]}, **rest[i]}

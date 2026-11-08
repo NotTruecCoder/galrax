@@ -1018,6 +1018,9 @@ def test_normal_form_conjugates_the_flow(name, p, K, field, point, linear):
     flow = PAdicFlow(p, K, field)
     form = flow.normal_form(point)
     assert _conjugates(flow, form)
+    certificate = form.certificate
+    assert certificate.verify() and certificate.degree == form.degree
+    assert certificate.margin + certificate.slope * form.degree >= K
     if linear is not None:
         assert form.linearizable == linear
     needed = 2 if p == 2 else 1
@@ -1057,6 +1060,30 @@ def test_normal_form_thresholds_and_linear_part():
         linear = (z.astype(object) @ matrix.T) % 3**8
         moved = np.asarray(form._normal_flow.flow(t, z)).astype(object)
         assert np.array_equal(linear, moved)
+
+
+def test_normal_form_certificate_detects_errors():
+    flow = PAdicFlow(3, 8, NORMAL_FORMS[4][3])
+    form = flow.normal_form((0, 0))
+    assert form.certificate.verify()
+    e, c = next(iter(form.transformation[0].items()))
+    form.transformation[0][e] = (c + 3) % 3**8
+    assert not form.certificate.verify()
+    form.transformation[0][e] = c
+    form.normal_form[1][(2, 0)] += 3**7
+    assert not form.certificate.verify()
+    form.normal_form[1][(2, 0)] -= 3**7
+    assert form.certificate.verify()
+    form.certificate.slope /= 2
+    assert not form.certificate.verify()
+
+
+def test_normal_form_sufficient_radius():
+    # Theorem: r >= 1 + max(sigma - c, 0) always works; here c = 1, sigma = 4.
+    flow = PAdicFlow(3, 8, NORMAL_FORMS[3][3])
+    form = flow.normal_form((0, 0), radius=4)
+    assert form.radius == 4 and form.certificate.verify()
+    assert _conjugates(flow, form)
 
 
 def test_normal_form_validation():
