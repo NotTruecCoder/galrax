@@ -2,6 +2,11 @@ from .arithmetic import Limbs as Limbs, Residues as Residues
 from .equilibria import Equilibrium as Equilibrium, Linearization as Linearization
 from .events import EventSet as EventSet, PAdicEvent as PAdicEvent
 from .flow import PAdicFlow as PAdicFlow, TimeDependentFlow as TimeDependentFlow
+from .formal import (
+    EllipticCurve as EllipticCurve,
+    FormalGroupFlow as FormalGroupFlow,
+    logarithmic_exponents as logarithmic_exponents,
+)
 from .koopman import (
     advection_diffusion as advection_diffusion,
     KoopmanOperator as KoopmanOperator,
