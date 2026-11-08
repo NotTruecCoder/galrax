@@ -87,27 +87,151 @@ def _monomials(d: int, n: int) -> list[tuple[int, ...]]:
     return [(k,) + rest for k in range(n, -1, -1) for rest in _monomials(d - 1, n - k)]
 
 
+def _restricted_operator(matrix, basis) -> np.ndarray:
+    """`L_A Phi = DPhi . Az - A Phi` on the span of the `z^e eps_i`, `(i, e)` in
+    `basis`, which must be invariant.
+    """
+    d = len(matrix)
+    index = {b: k for k, b in enumerate(basis)}
+    L = np.zeros((len(basis), len(basis)), dtype=object)
+    for column, (i, e) in enumerate(basis):
+        for j in range(d):
+            if not e[j]:
+                continue
+            for l in range(d):
+                if matrix[j][l]:
+                    f = e[:j] + (e[j] - 1,) + e[j + 1 :]
+                    f = f[:l] + (f[l] + 1,) + f[l + 1 :]
+                    L[index[(i, f)], column] += e[j] * matrix[j][l]
+        for row in range(d):
+            if matrix[row][i]:
+                L[index[(row, e)], column] -= matrix[row][i]
+    return L
+
+
 def homological_matrix(matrix, monomials) -> np.ndarray:
     """The matrix of `L_A Phi = DPhi . Az - A Phi` on homogeneous vector polynomials,
     in the basis `z^e eps_i` ordered by `i` and then as `monomials`.
     """
-    d, size = len(matrix), len(monomials)
-    index = {e: k for k, e in enumerate(monomials)}
-    L = np.zeros((d * size, d * size), dtype=object)
+    basis = [(i, e) for i in range(len(matrix)) for e in monomials]
+    return _restricted_operator(matrix, basis)
+
+
+def _matmul(a, b, m: int):
+    return [
+        [sum(x * y for x, y in zip(row, column)) % m for column in zip(*b)] for row in a
+    ]
+
+
+def _matpow(a, e: int, m: int):
+    out = [[int(i == j) for j in range(len(a))] for i in range(len(a))]
+    while e:
+        if e & 1:
+            out = _matmul(out, a, m)
+        a = _matmul(a, a, m)
+        e >>= 1
+    return out
+
+
+def _idempotent(B, p: int, digits: int):
+    """The idempotent commuting with `B` onto the part on which `B` is invertible
+    modulo `p`, along the part on which it is nilpotent: `lim (B^N)^{p^k}`, where
+    `N` is a multiple of the order of every element of `GL_d(F_p)` with `N >= d`.
+    """
+    d, m = len(B), p**digits
+    order = 1
+    for i in range(1, d + 1):
+        order = math.lcm(order, p**i - 1)
+    unipotent = 1
+    while unipotent < d:
+        unipotent *= p
+    U = _matpow(B, order * unipotent, m)
+    for _ in range(digits):
+        U = _matpow(U, p, m)
+    return U
+
+
+def _residual_splitting(matrix, p: int, digits: int):
+    """`(T, T^{-1}, groups)` with `T` in `GL_d(Z_p)` and `T^{-1} A T` block diagonal
+    modulo `p^digits`, the coordinates of each block listed in `groups`: one block
+    for each eigenvalue in `F_p` of `A / p^a` modulo `p` (`a = v(A)`), and one for
+    the remaining eigenvalues of each degree over `F_p`. `None` if there is only
+    one block.
+    """
+    d, m = len(matrix), p**digits
+    a = min((valuation(c, p, digits) for row in matrix for c in row), default=digits)
+    if d == 1 or a >= digits:
+        return None
+    reduced = [[c // p**a for c in row] for row in matrix]
+    eye = [[int(i == j) for j in range(d)] for i in range(d)]
+
+    def minus(x, y):
+        return [[(u - v) % m for u, v in zip(r, s)] for r, s in zip(x, y)]
+
+    projectors, rest = [], eye
+    shifts = [[[alpha * u for u in row] for row in eye] for alpha in range(p)]
+    for k in range(1, d + 1):
+        if not any(c % p for row in rest for c in row):
+            break
+        if k == 1:
+            candidates = [minus(reduced, shift) for shift in shifts]
+        else:
+            candidates = [minus(_matpow(reduced, p**k, m), reduced)]
+        for B in candidates:
+            F = _idempotent(B, p, digits)
+            E = _matmul(minus(eye, F), rest, m)
+            if any(c % p for row in E for c in row):
+                projectors.append(E)
+                rest = _matmul(rest, F, m)
+    if any(c % p for row in rest for c in row):
+        projectors.append(rest)
+    if len(projectors) < 2:
+        return None
+    columns, groups = [], []
+    for E in projectors:
+        chosen, basis = [], []
+        for j in range(d):
+            v = [E[i][j] % p for i in range(d)]
+            for b, lead in basis:
+                if v[lead]:
+                    f = v[lead] * pow(b[lead], -1, p) % p
+                    v = [(x - f * y) % p for x, y in zip(v, b)]
+            lead = next((i for i, x in enumerate(v) if x), None)
+            if lead is not None:
+                basis.append((v, lead))
+                chosen.append(j)
+        groups.append(list(range(len(columns), len(columns) + len(chosen))))
+        columns += [[E[i][j] for i in range(d)] for j in chosen]
+    T = [list(row) for row in zip(*columns)]
+    left, _, right, s = smith(T, p, digits)
+    if len(columns) != d or any(s):
+        return None
+    inverse = [[int(c) % m for c in row] for row in right @ left % m]
+    conjugate = _matmul(_matmul(inverse, matrix, m), T, m)
+    block = {j: g for g, group in enumerate(groups) for j in group}
+    if any(conjugate[i][j] for i in range(d) for j in range(d) if block[i] != block[j]):
+        return None
+    return T, inverse, groups
+
+
+def _change(polys: list[dict], T, inverse, m: int) -> list[dict]:
+    """`T^{-1} g(T w)` for polynomial maps `g`, modulo `m`."""
+    d = len(T)
+    maps = [
+        {tuple(int(i == k) for i in range(d)): T[j][k] for k in range(d) if T[j][k]}
+        for j in range(d)
+    ]
+    top = max((sum(e) for g in polys for e in g), default=0)
+    moved = [_substitute(g, maps, top, m) for g in polys]
+    out = []
     for i in range(d):
-        for k, e in enumerate(monomials):
-            column = i * size + k
-            for j in range(d):
-                if not e[j]:
-                    continue
-                for l in range(d):
-                    f = list(e)
-                    f[j] -= 1
-                    f[l] += 1
-                    L[i * size + index[tuple(f)], column] += e[j] * matrix[j][l]
-            for row in range(d):
-                L[row * size + k, column] -= matrix[row][i]
-    return L
+        total = {}
+        for j in range(d):
+            if inverse[i][j]:
+                for e, c in moved[j].items():
+                    total[e] = (total.get(e, 0) + inverse[i][j] * c) % m
+        out.append({e: c for e, c in total.items() if c})
+    return out
 
 
 def _multiply(a: dict, b: dict, degree: int, m: int) -> dict:
@@ -454,11 +578,28 @@ class NormalForm:
             )
         return x
 
-    def _operator(self, n: int, matrix, monomials, digits: int):
+    def _operator(self, n: int, matrix, monomials, groups, digits: int):
+        """The homological operator of degree `n`, block by block: for a block
+        diagonal `A` with coordinate blocks `groups`, the span of the `z^e eps_i` with
+        given degrees of `e` in each block and `i` in a given block is invariant.
+        Returns, for every such piece, its positions in the basis
+        `z^e eps_i -> i * len(monomials) + k` and the Smith decomposition of `L_A`
+        on it.
+        """
         key = (n, digits)
         if key not in self._smith:
-            L = homological_matrix(matrix, monomials)
-            self._smith[key] = smith(L % self.p**digits, self.p, digits)
+            block = {j: g for g, group in enumerate(groups) for j in group}
+            pieces = {}
+            for i in range(self.dimension):
+                for k, e in enumerate(monomials):
+                    degrees = tuple(sum(e[j] for j in group) for group in groups)
+                    pieces.setdefault((degrees, block[i]), []).append((i, k, e))
+            out = []
+            for members in pieces.values():
+                L = _restricted_operator(matrix, [(i, e) for i, _, e in members])
+                positions = [i * len(monomials) + k for i, k, _ in members]
+                out.append((positions, smith(L % self.p**digits, self.p, digits)))
+            self._smith[key] = out
         return self._smith[key]
 
     def _build(self, centre, r: int, work: int, threshold: int, top: int):
@@ -471,6 +612,13 @@ class NormalForm:
         if any(f.get((0,) * d, 0) for f in scaled):
             raise ValueError("The equilibrium is not exact enough.")
         unit = [tuple(int(i == j) for i in range(d)) for j in range(d)]
+        original = [[scaled[i].get(unit[j], 0) for j in range(d)] for i in range(d)]
+        splitting = _residual_splitting(original, p, work)
+        if splitting is None:
+            groups = [list(range(d))]
+        else:
+            T, inverse, groups = splitting
+            scaled = _change(scaled, T, inverse, m)
         matrix = [[scaled[i].get(unit[j], 0) for j in range(d)] for i in range(d)]
         nonlinear = [{e: c for e, c in f.items() if sum(e) >= 2} for f in scaled]
         field = [{e: c % p**K for e, c in f.items() if c % p**K} for f in scaled]
@@ -516,33 +664,47 @@ class NormalForm:
                         if sum(f) == n:
                             target[i * size + position[f]] -= value
             target %= m
-            left, left_inverse, right, s = self._operator(n, matrix, monomials, work)
-            c = left @ target % m
-            solution = np.zeros(d * size, dtype=object)
-            kept = np.zeros(d * size, dtype=object)
+            pieces = self._operator(n, matrix, monomials, groups, work)
+            projected = []
             costly = []
-            for k, (value, v) in enumerate(zip(c, s)):
-                if not value:
-                    continue
-                if v > threshold:
-                    costly.append(k)
-                elif value % p**v:
-                    raise _Retry
-                else:
-                    solution[k] = int(value) // p**v
+            for positions, (left, _, _, s) in pieces:
+                c = left @ target[positions] % m
+                solution = np.zeros(len(positions), dtype=object)
+                kept = np.zeros(len(positions), dtype=object)
+                for k, (value, v) in enumerate(zip(c, s)):
+                    if not value:
+                        continue
+                    if v > threshold:
+                        costly.append((len(projected), k))
+                    elif value % p**v:
+                        raise _Retry
+                    else:
+                        solution[k] = int(value) // p**v
+                projected.append((c, solution, kept))
             # The cost of a division is fixed by the pair: a large divisor costs
             # nothing when the quotient is as divisible as the ordinary ones.
-            quotients = [valuation(int(q), p, work) for q in solution if q]
+            quotients = [
+                valuation(int(q), p, work)
+                for _, solution, _ in projected
+                for q in solution
+                if q
+            ]
             level = min(quotients, default=work)
-            for k in costly:
-                value, v = int(c[k]), s[k]
+            for piece, k in costly:
+                c, solution, kept = projected[piece]
+                value, v = int(c[k]), pieces[piece][1][3][k]
                 if v < work and valuation(value, p, work) - v >= level:
                     solution[k] = value // p**v
                 else:
                     kept[k] = value
-            divisors[n] = sorted(s)
-            new_phi = right @ solution % m
-            new_rest = left_inverse @ kept % m
+            divisors[n] = sorted(v for _, (_, _, _, s) in pieces for v in s)
+            new_phi = np.zeros(d * size, dtype=object)
+            new_rest = np.zeros(d * size, dtype=object)
+            for (positions, (_, back, right, _)), (_, solution, kept) in zip(
+                pieces, projected
+            ):
+                new_phi[positions] = right @ solution % m
+                new_rest[positions] = back @ kept % m
             for i in range(d):
                 for k, e in enumerate(monomials):
                     a, b = int(new_phi[i * size + k]), int(new_rest[i * size + k])
@@ -563,13 +725,16 @@ class NormalForm:
                 break
         else:
             raise _Retry
-        self.matrix = [[c % p**K for c in row] for row in matrix]
+        if splitting is not None:
+            phi = _change(phi, inverse, T, m)
+            rest = _change(rest, inverse, T, m)
+        self.matrix = [[c % p**K for c in row] for row in original]
         self.divisors = divisors
         self.degree = n
         self._majorant = found
         self._phi = phi
         self._normal = [
-            {**{unit[j]: matrix[i][j] for j in range(d) if matrix[i][j]}, **rest[i]}
+            {**{unit[j]: original[i][j] for j in range(d) if original[i][j]}, **rest[i]}
             for i in range(d)
         ]
 

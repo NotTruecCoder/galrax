@@ -988,6 +988,19 @@ NORMAL_FORMS = [
         (0, 0, 0),
         False,
     ),
+    (
+        "four",
+        3,
+        6,
+        [
+            {(1, 0, 0, 0): 3, (0, 1, 0, 0): 6, (0, 0, 2, 0): 3},
+            {(1, 0, 0, 0): 3, (0, 1, 0, 0): 3, (0, 0, 0, 2): 3},
+            {(0, 0, 1, 0): 6, (2, 0, 0, 0): 3},
+            {(0, 0, 1, 0): 3, (0, 0, 0, 1): 12, (1, 1, 0, 0): 3},
+        ],
+        (0, 0, 0, 0),
+        None,
+    ),
     ("two", 2, 10, [{(1, 0): 4, (0, 2): 4}, {(0, 1): 12, (3, 0): 4}], (0, 0), False),
     (
         "analytic",
@@ -1157,6 +1170,20 @@ def test_smith_exponents_of_planar_jordan_blocks():
                     )
                 )
             assert got == want
+
+
+def test_normal_form_splits_by_residues():
+    # A / 3 has the residual eigenvalues 1 and 2, but is not diagonal: the blocks
+    # come from a change of basis, and the exponents agree with the dense operator.
+    field = [{(1, 0): 3, (0, 1): 3, (0, 2): 3}, {(0, 1): 6, (2, 0): 3}]
+    flow = PAdicFlow(3, 8, field)
+    form = flow.normal_form((0, 0))
+    assert form.certificate.verify() and _conjugates(flow, form)
+    assert not form.linearizable
+    digits = form.precision + form.resonance_digits + 2
+    for n, exponents in form.divisors.items():
+        L = homological_matrix([[3, 3], [0, 6]], _monomials(2, n))
+        assert exponents == sorted(smith(L % 3**digits, 3, digits)[3])
 
 
 def test_normal_form_validation():
