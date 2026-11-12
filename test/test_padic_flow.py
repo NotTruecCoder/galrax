@@ -1105,9 +1105,9 @@ def test_normal_form_sufficient_radius():
     assert _conjugates(flow, form)
 
 
-def test_normal_form_removes_cheap_large_divisors():
-    # A Jordan block: some divisors exceed the threshold, but their numerators are
-    # divisible enough that removing them costs nothing.
+def test_normal_form_keeps_large_divisors():
+    # A Jordan block: divisors above the threshold stay in R, as in the paper, even
+    # when their numerators are divisible enough to remove them.
     field = [
         {(1, 0): 3, (0, 1): 3, (2, 1): -3, (1, 1): -3, (3, 0): 6},
         {(0, 1): 3, (1, 1): -3, (3, 0): 27, (0, 3): 6},
@@ -1117,7 +1117,7 @@ def test_normal_form_removes_cheap_large_divisors():
     work = form.precision + form.resonance_digits + 2
     large = [s for exponents in form.divisors.values() for s in exponents]
     assert any(form.resonance_digits < s < work for s in large)
-    assert form.linearizable and form.certificate.verify()
+    assert not form.linearizable and form.certificate.verify()
     assert _conjugates(flow, form)
 
 

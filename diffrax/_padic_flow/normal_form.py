@@ -666,7 +666,6 @@ class NormalForm:
             target %= m
             pieces = self._operator(n, matrix, monomials, groups, work)
             projected = []
-            costly = []
             for positions, (left, _, _, s) in pieces:
                 c = left @ target[positions] % m
                 solution = np.zeros(len(positions), dtype=object)
@@ -675,28 +674,12 @@ class NormalForm:
                     if not value:
                         continue
                     if v > threshold:
-                        costly.append((len(projected), k))
+                        kept[k] = int(value)
                     elif value % p**v:
                         raise _Retry
                     else:
                         solution[k] = int(value) // p**v
                 projected.append((c, solution, kept))
-            # The cost of a division is fixed by the pair: a large divisor costs
-            # nothing when the quotient is as divisible as the ordinary ones.
-            quotients = [
-                valuation(int(q), p, work)
-                for _, solution, _ in projected
-                for q in solution
-                if q
-            ]
-            level = min(quotients, default=work)
-            for piece, k in costly:
-                c, solution, kept = projected[piece]
-                value, v = int(c[k]), pieces[piece][1][3][k]
-                if v < work and valuation(value, p, work) - v >= level:
-                    solution[k] = value // p**v
-                else:
-                    kept[k] = value
             divisors[n] = sorted(v for _, (_, _, _, s) in pieces for v in s)
             new_phi = np.zeros(d * size, dtype=object)
             new_rest = np.zeros(d * size, dtype=object)
