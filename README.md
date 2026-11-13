@@ -21,9 +21,10 @@ The hard part is speed: the polynomial has degree about $K$. Most of `diffrax.pa
 
 What it can do:
 
-- **Evaluate the flow exactly on the GPU.** Time is split into a tabulated part and a $p$-adically small part, as in table-driven `exp`, and space is re-expanded around the centres of small balls. For 19 digits of $\mathbb{Z}_3$ the degree drops from 33 to 2, and a laptop GPU computes about $6 \times 10^8$ exact values per second. Any number of digits works, through two-word and multi-limb arithmetic.
+- **Evaluate the flow exactly on the GPU.** Time is split into a tabulated part and a $p$-adically small part, as in table-driven `exp`, and space is re-expanded around the centres of small balls. For 19 digits of $\mathbb{Z}_3$ the degree drops from 33 to 2, and a laptop GPU computes $2 \times 10^8$ to $6 \times 10^8$ exact values per second, depending on its clock. Any number of digits works, through two-word and multi-limb arithmetic.
 - **Describe the orbits.** In one dimension the orbit of $x$ is exactly the ball of radius $|f(x)|_p$ around it, traversed at constant speed. In any dimension there are flow-box coordinates, computed by Newton's method, which give hitting times, return times and orbit averages by formula.
 - **Find events, equilibria and linearisations.** Event sets are finite unions of balls in time, found by refinement; equilibria are certified by Hensel's lemma.
+- **Interpolate iterates and certify minimal actions.** A map congruent to the identity modulo $p$ is the time-one map of exactly one field, computed from the iterates; several such maps whose displacements at a point form a basis of $p^k\mathbb{Z}_p^d$ generate a group acting minimally on that ball, with an explicit isometric chart.
 - **Compute certified normal forms.** Near an equilibrium, the Poincaré–Dulac normal form is built through the Smith form of the homological operator over $\mathbb{Z}_p$. Complex eigenvalues, Jordan blocks, resonances and zero eigenvalues all go through the same algorithm. Each result comes with a certificate, rechecked in exact arithmetic, that the flow through the normal form is exact modulo $p^K$.
 - **Compute $p$-adic elliptic logarithms.** The formal logarithm of $\mathbb{G}_m$ or of an elliptic curve is the flow-box coordinate of an explicit field, so the flow machinery computes it exactly, together with multiples $[t]P$ for $p$-adic $t$.
 - **Analyse discrete maps.** Cycle trees and minimal decompositions of polynomial and 1-Lipschitz maps of $\mathbb{Z}_p$.
@@ -94,6 +95,26 @@ print(form.resonant_terms, form.radius)  # [{}, {(2, 0): ...}] 2: on |x| <= 3^-2
 print(form.certificate.verify())  # True: the flow through the normal form is exact mod 3^8
 ```
 
+Maps close to the identity, minimal actions and bounds on small divisors:
+
+```python
+from fractions import Fraction
+
+g = [{(1, 0): 1, (0, 0): 3, (0, 2): 3}, {(0, 1): 1, (1, 0): 9}]  # (x + 3 + 3y^2, y + 9x)
+h = [{(1, 0): 1, (0, 1): 9}, {(0, 1): 1, (0, 0): 3, (2, 0): 3}]  # (x + 9y, y + 3 + 3x^2)
+
+flow = pf.PAdicFlow.from_time_one(3, 8, g)  # the field X with phi_1 = g
+print(flow.flow(-1, flow.flow(1, np.array([4, 7]))))  # [4 7]: phi_{-1} = g^{-1}
+
+action = pf.MinimalAction(3, 8, [g, h], (0, 0))
+print(action.level)  # 1: <g, h> acts minimally on (0, 0) + 3 Z_3^2
+z = action.chart([5, 7])  # phi^g_5 o phi^h_7 (0, 0), an isometry of Z_3^2 onto the ball
+print(action.coordinates(z))  # [5 7]
+
+print(pf.smith_exponent_bound([[3, 3], [0, 3]], n=4, p=3))  # (10, 26): rank, exponent bound
+print(pf.linear_degree([10, Fraction(28, 19)], p=3, threshold=12))  # 3: eigenvalues log_3
+```
+
 ### Elliptic logarithms as flows
 
 For a formal group with invariant differential $\omega(z)\,dz$, the field $f(u) = p/\omega(pu)$ moves points by translation in the group: $\log(p\,\varphi_s(u)) = \log(pu) + p^2 s$. Its rectifying coordinate is the formal logarithm, so Newton's method for flow-box coordinates computes $p$-adic elliptic logarithms exactly. The same idea gives the small divisors of a linear part $\mathrm{diag}(\log P_1, \dots, \log P_d)$: they are logarithms of the points $\sum_j m_j P_j - P_i$, and their valuations come straight from rational arithmetic on the curve.
@@ -130,7 +151,21 @@ Throughput for $10^6$ random $(t, x)$ per call on a laptop GPU with 6 GB of memo
 | 3, 12, 2 | 12 → 3 | 19 → 187 M/s | 6.1 → 29 M/s |
 | 3, 8, 3 | 5 (dense → sparse) | 11 → 200 M/s | 3.3 → 11 M/s |
 
-These numbers were measured with Horner's rule as a `lax.scan` loop. The current code unrolls it, which lets XLA fuse the whole evaluation into one kernel and is another 1.5–4 times faster: 19 digits of $\mathbb{Z}_3$ now run at about 650 M/s. A few things we learned along the way:
+These numbers were measured with Horner's rule as a `lax.scan` loop. The current code unrolls it, which lets XLA fuse the whole evaluation into one kernel and is another 1.5–4 times faster: 19 digits of $\mathbb{Z}_3$ reached about 650 M/s in that run.
+
+`benchmarks/padic_flow.py` reproduces the measurements. A run of the current code on the same laptop (13 November 2026, WSL2 with 4 GB of memory, `XLA_PYTHON_CLIENT_PREALLOCATE=false`, so the GPU clock and allocator were less favourable than above):
+
+| $p$, digits, $d$ | set-up | degree → table | `flow` | `rectify` | full series |
+|---|---|---|---|---|---|
+| 3, 19, 1 | 0.7 s | 33 → 2 | 184 M/s | 110 M/s | 1.8 M/s |
+| 5, 13, 1 | 0.3 s | 13 → 2 | 193 M/s | 129 M/s | 5.4 M/s |
+| 7, 11, 1 | 0.3 s | 11 → 2 | 205 M/s | 139 M/s | 7.0 M/s |
+| 3, 38, 1 (two words) | 5.3 s | 75 → 5 | 115 M/s | 30 M/s | — |
+| 3, 12, 2 | 0.7 s | 12 → 5 | 139 M/s | 78 M/s | 1.8 M/s |
+
+The set-up builds the tables on the host in exact integers; before, it ran hundreds of small JAX operations and took 7 s, 8 s and 21 s for the first, fourth and last rows (123 s for 60 digits on limbs, now 2 s). The full series of degree 75 is not timed: unrolled, it does not compile in 4 GB. For maps close to the identity, `time_one_field` takes a few milliseconds and `MinimalAction` about a second to set up for $d = 2$ and up to 16 digits; the $d = 4$ normal form of the test suite (one complex pair, two real eigenvalues) is built and certified in 0.6 s.
+
+A few things we learned along the way:
 
 - Reading the table one coefficient at a time inside Horner's loop matters more than the arithmetic. Gathering each point's row first was slower than no space reduction at all.
 - Tables of 0.5–10 MB are fastest; larger ones fall out of the GPU cache.
@@ -245,6 +280,9 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 | Name | What it is |
 |---|---|
 | `PAdicFlow(p, precision, field)` | The flow of a polynomial or analytic field divisible by $p$: `flow`, `orbit_level`, `rectify`, `orbit_time`, `first_hitting_time`, `return_time`, `orbit_average`, `event_times`, `equilibria`, `linearization`, `normal_form`, `mahler_coefficients`. |
+| `PAdicFlow.from_time_one(p, precision, g)`, `time_one_field` | The flow whose time-one map is $g \equiv \mathrm{id} \pmod p$, and its field $\sum_j (-1)^{j-1}\Delta_g^j(\mathrm{id})/j$. |
+| `MinimalAction(p, precision, maps, point)` | $d$ such maps whose displacements at `point` form a basis of $p^k\mathbb{Z}_p^d$: `level`, `ball`, `chart`, `coordinates`. |
+| `smith_exponent_bound`, `height_bound`, `linear_degree` | Bounds on the Smith exponents of the homological operator: Hadamard for rational $A$, heights for eigenvalues $\log_p \alpha_i$. |
 | `TimeDependentFlow(p, precision, field)` | $dx/dt = f(t, x)$ from $t_0$ to $t_1 \in t_0 + p\,\mathbb{Z}_p$. |
 | `PAdicEvent`, `EventSet` | An event $g(\varphi_t(x)) = 0$ and its set of times, a finite union of balls. |
 | `Equilibrium`, `Linearization` | Zeros of $f$ with Hensel certificates, and linearising coordinates in dimension one. |
@@ -284,11 +322,13 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 - Beyond 62 bits, results come back as Python integers and the call cannot be traced by `jit` as a whole.
 - Events, equilibria, linearisation, maps and the Smith forms of the normal form run on the host, sequentially.
 - Analytic fields need a lower bound on the valuations of their coefficients; a wrong bound is not detected.
+- Queries that have no answer raise instead of returning a guess: `rectify` for a point outside the flow box (an error at run time under `jit`), `Linearization.orbit_time` for a point off the orbit, `MinimalAction` when the displacements are not a basis.
+- The elliptic case of `height_bound` needs upper bounds for the Néron–Tate Gram matrix and for $h - \hat h$ from the user.
 - Representations of a finite group cost about $O(|G|^3)$, so groups up to a few thousand elements are practical.
 
 ## What is known and what is new
 
-Interpolation of iterates by Mahler series is due to Bell and Poonen; cycles of polynomial maps and the permanence of their growth to desJardins–Zieve and Fan–Liao; one-dimensional $p$-adic linearisation to Herman–Yoccoz. That orbits in dimension one are balls can also be seen by separation of variables, and is probably known to specialists. As far as we could find, the computational side is new: exact global flows in machine integers, flow-box coordinates by Newton's method, event sets by ball refinement, certified normal forms through Smith forms over $\mathbb{Z}_p$, and formal logarithms computed as flow-box coordinates.
+Interpolation of iterates by Mahler series is due to Bell and Poonen; here it is inverted, computing the field of a map, and the product of the flows of several maps is the chart of Cantat–Jang, turned into a criterion for minimality on balls of explicit radius (for $d = 2$, $k = 1$ it is Jang's step for Markoff surfaces); cycles of polynomial maps and the permanence of their growth to desJardins–Zieve and Fan–Liao; one-dimensional $p$-adic linearisation to Herman–Yoccoz. That orbits in dimension one are balls can also be seen by separation of variables, and is probably known to specialists. As far as we could find, the computational side is new: exact global flows in machine integers, flow-box coordinates by Newton's method, event sets by ball refinement, certified normal forms through Smith forms over $\mathbb{Z}_p$, and formal logarithms computed as flow-box coordinates.
 
 ## Development
 
@@ -296,18 +336,19 @@ Interpolation of iterates by Mahler series is due to Bell and Poonen; cycles of 
 git clone https://github.com/NotTruecCoder/galrax.git
 cd galrax
 pip install -e . pytest scipy beartype
-pytest test/test_padic_formal.py   # quick
+pytest test/test_padic_formal.py test/test_padic_bounds.py test/test_padic_interpolation.py test/test_padic_tables.py   # quick
 pytest test/test_group_algebra.py test/test_ultrametric.py test/test_padic_flow.py   # slow
+python benchmarks/padic_flow.py   # GPU throughput and set-up times
 ```
 
 The full Diffrax test suite also runs with `pytest`. `test_group_algebra.py` needs a few GB of memory.
 
 | Path | Contents |
 |---|---|
-| `diffrax/_padic_flow/` | `flow.py` (table-driven flows, flow-box coordinates), `arithmetic.py` (residues, limbs, Horner), `normal_form.py` (Smith forms, certificates), `formal.py` (formal groups, elliptic curves), `equilibria.py`, `events.py`, `koopman.py`, `maps.py`, `series.py`, `plot.py`. |
+| `diffrax/_padic_flow/` | `flow.py` (table-driven flows, flow-box coordinates), `arithmetic.py` (residues, limbs, Horner), `normal_form.py` (Smith forms, certificates), `formal.py` (formal groups, elliptic curves, height bounds), `interpolation.py` (time-one maps, minimal actions), `equilibria.py`, `events.py`, `koopman.py`, `maps.py`, `series.py`, `plot.py`. |
 | `diffrax/_ultrametric/` | $\mathbb{Z}_p$ to $n$ digits, ultrametric operators, Kozyrev wavelets. |
 | `diffrax/_group_algebra/` | Finite groups, representations, Fourier transforms, `GroupODE`, `Lawson`. |
-| `test/` | `test_padic_flow.py`, `test_padic_formal.py`, `test_ultrametric.py`, `test_group_algebra.py`, and the Diffrax tests. |
+| `test/` | `test_padic_flow.py`, `test_padic_formal.py`, `test_padic_bounds.py`, `test_padic_interpolation.py`, `test_padic_tables.py`, `test_ultrametric.py`, `test_group_algebra.py`, and the Diffrax tests. |
 | `examples/padic_figures.py` | Draws the pictures. |
 
 ## Citing
