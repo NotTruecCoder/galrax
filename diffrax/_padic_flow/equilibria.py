@@ -262,12 +262,19 @@ class Linearization:
         p, K = self.p, self.precision
         hx, hz = self.forward(x), self.forward(z)
         s = valuation(hx, p, K)
+        ell = self.multiplier_valuation
         if s >= K:
+            if hz % p**K:
+                raise ValueError("`x` is the equilibrium, and `z` is not on its orbit.")
             return 0
         digits = K - s
         modulus = p**digits
+        if hz % p**s:
+            raise ValueError("`z` is not on the orbit of `x`.")
         ratio = (hz // p**s) * pow(hx // p**s, -1, modulus) % modulus
+        # e^{lambda t} lies in 1 + p^ell Z_p, so the ratio must too.
+        if (ratio - 1) % p ** min(ell, digits):
+            raise ValueError("`z` is not on the orbit of `x`.")
         logarithm = self._log(ratio, digits)
-        ell = self.multiplier_valuation
         unit = (self._lambda // p**ell) % modulus
         return logarithm // p**ell * pow(unit, -1, modulus) % p ** (digits - ell)

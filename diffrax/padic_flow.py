@@ -1,13 +1,16 @@
 """Exact p-adic dynamics.
 
 Flows of `dx/dt = f(x)` and `dx/dt = f(t, x)` with `x` in `Z_p^d`, `p`-adic time and a
-polynomial `f`, computed exactly modulo `p^K` for all points and times at once: Lie
-series in `(t, x)`, table-driven evaluation, Mahler interpolation of iterates,
-flow-box (rectifying) coordinates by Newton's method, hitting and return times, orbit
-averages, events, equilibria and linearisation, formal-group flows whose rectifying
-coordinate is the formal logarithm, and Koopman operators with
-ultrametric diffusion. Discrete maps `x -> T(x)` are analysed through their cycle tree
-and minimal decomposition. Flows run on `int64` JAX arrays, with any number of digits.
+polynomial or analytic `f`, computed exactly modulo `p^K` for all points and times at
+once: Lie series in `(t, x)`, table-driven evaluation, Mahler interpolation of
+iterates, flow-box (rectifying) coordinates by Newton's method, hitting and return
+times, orbit averages, events, equilibria, linearisation and certified normal forms,
+formal-group flows whose rectifying coordinate is the formal logarithm, and Koopman
+operators with ultrametric diffusion. The field of a map congruent to the identity
+and minimal actions of several such maps on balls are computed exactly, and so are
+bounds on the small divisors of normal forms. Discrete maps `x -> T(x)` are analysed
+through their cycle tree and minimal decomposition. Flows run on `int64` JAX arrays,
+with any number of digits.
 """
 
 from ._padic_flow import (
@@ -19,10 +22,13 @@ from ._padic_flow import (
     Equilibrium as Equilibrium,
     EventSet as EventSet,
     FormalGroupFlow as FormalGroupFlow,
+    height_bound as height_bound,
     KoopmanOperator as KoopmanOperator,
     Limbs as Limbs,
+    linear_degree as linear_degree,
     Linearization as Linearization,
     logarithmic_exponents as logarithmic_exponents,
+    MinimalAction as MinimalAction,
     NormalForm as NormalForm,
     PAdicEvent as PAdicEvent,
     PAdicFlow as PAdicFlow,
@@ -32,5 +38,7 @@ from ._padic_flow import (
     plot_trajectory as plot_trajectory,
     PowerSeries as PowerSeries,
     Residues as Residues,
+    smith_exponent_bound as smith_exponent_bound,
+    time_one_field as time_one_field,
     TimeDependentFlow as TimeDependentFlow,
 )

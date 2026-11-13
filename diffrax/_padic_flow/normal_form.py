@@ -117,6 +117,63 @@ def homological_matrix(matrix, monomials) -> np.ndarray:
     return _restricted_operator(matrix, basis)
 
 
+def _rank(matrix) -> int:
+    """The rank over `Q` of an integer matrix, by fraction-free elimination."""
+    rows = [[int(c) for c in row] for row in matrix]
+    rank, previous = 0, 1
+    columns = len(rows[0]) if rows else 0
+    for col in range(columns):
+        pivot = next((i for i in range(rank, len(rows)) if rows[i][col]), None)
+        if pivot is None:
+            continue
+        rows[rank], rows[pivot] = rows[pivot], rows[rank]
+        top = rows[rank][col]
+        for i in range(rank + 1, len(rows)):
+            factor = rows[i][col]
+            rows[i] = [
+                (top * a - factor * b) // previous for a, b in zip(rows[i], rows[rank])
+            ]
+        previous = top
+        rank += 1
+    return rank
+
+
+def smith_exponent_bound(matrix, n: int, p: int) -> tuple[int, int | None]:
+    """The rank `rho_n` over `Q` of the homological operator `L_n` of a rational matrix
+    `A`, and an upper bound for every finite Smith exponent of `L_n` over `Z_p`
+    (`None` when `rho_n = 0`):
+
+    `s_j(n) <= floor(rho_n log_p(sqrt(rho_n) (n + 1) H)) - (rho_n - 1) a`,
+
+    where `a = min v_p(A_ij)` and `H` bounds the entries of `qA`, `q` the common
+    denominator. The minors of order `rho_n` of `L_n` are non-zero integers bounded by
+    Hadamard's inequality. A Smith decomposition computed modulo `p^W` with `W` above
+    the bound has exactly `M_n - rho_n` factors that vanish, and they are exact zeros.
+    """
+    p, n = int(p), int(n)
+    A = [[Fraction(c) for c in row] for row in matrix]
+    d = len(A)
+    q = math.lcm(*(c.denominator for row in A for c in row))
+    if q % p == 0:
+        raise ValueError("The entries of `A` must be p-adic integers.")
+    integral = [[int(c * q) for c in row] for row in A]
+    entries = [c for row in integral for c in row if c]
+    if not entries:
+        return 0, None
+    a = min(valuation(abs(c), p, abs(c).bit_length() + 1) for c in entries)
+    L = homological_matrix(integral, _monomials(d, n))
+    rho = _rank(L)
+    if rho == 0:
+        return 0, None
+    H = max(1, max(abs(c) for c in entries))
+    # The largest B with p^(2B) <= rho^rho ((n + 1) H)^(2 rho), in exact integers.
+    target = rho**rho * ((n + 1) * H) ** (2 * rho)
+    B = 0
+    while p ** (2 * (B + 1)) <= target:
+        B += 1
+    return rho, B - (rho - 1) * a
+
+
 def _matmul(a, b, m: int):
     return [
         [sum(x * y for x, y in zip(row, column)) % m for column in zip(*b)] for row in a
@@ -202,15 +259,19 @@ def _residual_splitting(matrix, p: int, digits: int):
                 chosen.append(j)
         groups.append(list(range(len(columns), len(columns) + len(chosen))))
         columns += [[E[i][j] for i in range(d)] for j in chosen]
+    # The projectors are complementary idempotents, so these hold by construction;
+    # failing them is a bug, not a reason to fall back to the dense operator.
+    if len(columns) != d:
+        raise RuntimeError("The residual projectors do not span Z_p^d.")
     T = [list(row) for row in zip(*columns)]
     left, _, right, s = smith(T, p, digits)
-    if len(columns) != d or any(s):
-        return None
+    if any(s):
+        raise RuntimeError("The residual splitting is not invertible over Z_p.")
     inverse = [[int(c) % m for c in row] for row in right @ left % m]
     conjugate = _matmul(_matmul(inverse, matrix, m), T, m)
     block = {j: g for g, group in enumerate(groups) for j in group}
     if any(conjugate[i][j] for i in range(d) for j in range(d) if block[i] != block[j]):
-        return None
+        raise RuntimeError("The residual splitting does not make A block diagonal.")
     return T, inverse, groups
 
 

@@ -5,14 +5,23 @@ from .flow import PAdicFlow as PAdicFlow, TimeDependentFlow as TimeDependentFlow
 from .formal import (
     EllipticCurve as EllipticCurve,
     FormalGroupFlow as FormalGroupFlow,
+    height_bound as height_bound,
+    linear_degree as linear_degree,
     logarithmic_exponents as logarithmic_exponents,
+)
+from .interpolation import (
+    MinimalAction as MinimalAction,
+    time_one_field as time_one_field,
 )
 from .koopman import (
     advection_diffusion as advection_diffusion,
     KoopmanOperator as KoopmanOperator,
 )
 from .maps import Component as Component, Cycle as Cycle, PAdicMap as PAdicMap
-from .normal_form import NormalForm as NormalForm
+from .normal_form import (
+    NormalForm as NormalForm,
+    smith_exponent_bound as smith_exponent_bound,
+)
 from .plot import (
     plot_advection_diffusion as plot_advection_diffusion,
     plot_phase_portrait as plot_phase_portrait,

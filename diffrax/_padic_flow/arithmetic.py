@@ -323,10 +323,9 @@ class Limbs(Residues):
 
     def asarray(self, x):
         if not isinstance(x, jax.Array) and np.asarray(x).dtype == object:
-            array = np.asarray(x)
-            values = [self._encode(v) for v in array.ravel()]
-            out = np.array(values, dtype=np.int64).reshape(array.shape + (self.limbs,))
-            return jnp.asarray(out)
+            array = np.asarray(x) % self.modulus
+            limbs = [array // self.base**k % self.base for k in range(self.limbs)]
+            return jnp.asarray(np.stack(limbs, axis=-1).astype(np.int64))
         x = jnp.asarray(x)
         if not jnp.issubdtype(x.dtype, jnp.integer):
             raise ValueError("p-adic integers must be given as integer arrays.")

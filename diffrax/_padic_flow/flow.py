@@ -1,5 +1,7 @@
 import math
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -37,6 +39,28 @@ def _terms(p: int, precision: int, rate: int) -> int:
     while n * rate - (n - 1) // (p - 1) < precision:
         n += 1
     return n
+
+
+def _require(array, ok, message: str):
+    """`array`, after checking that `ok` holds everywhere: a `ValueError` for concrete
+    inputs, and `equinox.error_if` (an error at run time) under `jit`.
+    """
+    try:
+        concrete = np.asarray(ok)
+    except (jax.errors.ConcretizationTypeError, jax.errors.TracerArrayConversionError):
+        return eqx.error_if(array, ~ok, message)
+    if not concrete.all():
+        raise ValueError(message)
+    return array
+
+
+def _host(values, modulus: int) -> np.ndarray:
+    """Exact residues on the host: `int64` while products of two of them fit, Python
+    integers otherwise.
+    """
+    if modulus < 2**31:
+        return np.asarray(values).astype(np.int64) % modulus
+    return np.asarray(values).astype(object) % modulus
 
 
 class PAdicFlow:
@@ -150,25 +174,31 @@ class PAdicFlow:
                 max((e[j] for poly in polys for e in poly), default=0) for j in range(d)
             )
 
-        def stored(polys, layout):
+        modulus = self.modulus
+
+        def raw(polys, layout):
+            # The tables are built on the host in exact integers and encoded once.
             if storage == "sparse":
                 array = to_sparse(polys, d, layout[0], layout[1])
             else:
                 array = to_dense(polys, d, layout[0])
+            return _host(array, modulus)
+
+        def encoded(array):
             return np.asarray(residues.asarray(array))
 
         taylor = self._divided_series(None)
         self.degree = max(degree(polys) for polys in taylor)
         layout = (self.degree, caps_of([g for polys in taylor for g in polys]))
         self._taylor_layout = layout + (None, None)
-        series = np.stack([stored(polys, layout) for polys in taylor])
-        self._taylor = series
+        series = np.stack([raw(polys, layout) for polys in taylor])
+        self._taylor = encoded(series)
         reduced = [
             {e: c for e, c in component.items() if c}
             for component in reduce(field, self.modulus)
         ]
         self._field_layout = (degree(reduced), caps_of(reduced), None, None)
-        self._field = stored(reduced, self._field_layout)
+        self._field = encoded(raw(reduced, self._field_layout))
 
         tail = _terms(p, K, rate + table_digits)
         tail_degree = max(degree(polys) for polys in taylor[:tail])
@@ -177,15 +207,13 @@ class PAdicFlow:
             caps_of([g for polys in taylor[:tail] for g in polys]),
         )
         self.tail_terms = tail
-        tail_polys = np.stack([stored(polys, tail_layout) for polys in taylor[:tail]])
+        tail_polys = np.stack([raw(polys, tail_layout) for polys in taylor[:tail]])
 
         size = p**table_digits
-        axes = series.ndim - 1 - residues.extra
-        s = jnp.arange(size, dtype=jnp.int64).reshape((size,) + (1,) * axes)
-        s = residues.asarray(s)
-        table = jnp.zeros((size,) + series.shape[1:], dtype=jnp.int64)
+        s = _host(np.arange(size), modulus).reshape((size,) + (1,) * (series.ndim - 1))
+        table = np.zeros((size,) + series.shape[1:], dtype=series.dtype)
         for coefficients in series[::-1]:
-            table = residues.add(residues.mul(table, s), jnp.asarray(coefficients))
+            table = (table * s + coefficients) % modulus
 
         words = getattr(residues, "limbs", 1)
 
@@ -214,20 +242,31 @@ class PAdicFlow:
         self.space_digits = r
         if storage == "sparse":
             table, self._table_layout = self._recenter_sparse(table, r, layout)
-            tail, self._tail_layout = self._recenter_sparse(
-                jnp.asarray(tail_polys), r, tail_layout
-            )
+            tail, self._tail_layout = self._recenter_sparse(tail_polys, r, tail_layout)
             self.table_degree = max(map(sum, simplex(d, *self._table_layout)))
         else:
             table = self._recenter(table, r[0])
-            self.table_degree = table.shape[table.ndim - residues.extra - 1] - 1
-            tail = self._recenter(jnp.asarray(tail_polys), r[0])
-            degree_tail = tail.shape[tail.ndim - residues.extra - 1] - 1
+            self.table_degree = table.shape[-1] - 1
+            tail = self._recenter(tail_polys, r[0])
             self._table_layout = (self.table_degree, None, None, None)
-            self._tail_layout = (degree_tail, None, None, None)
-        table = np.asarray(table)
+            self._tail_layout = (tail.shape[-1] - 1, None, None, None)
+        table = encoded(table)
         self._table = table.reshape((-1,) + table.shape[2:])
-        self._tail = np.moveaxis(np.asarray(tail), 1, 0)
+        self._tail = np.moveaxis(encoded(tail), 1, 0)
+
+    @classmethod
+    def from_time_one(cls, p: int, precision: int, g, **kwargs) -> "PAdicFlow":
+        """The flow whose time-one map is `g`, an analytic map of `Z_p^d` congruent to
+        the identity modulo `p^c` (`c >= 1`, `c >= 2` for `p = 2`), given like a
+        vector field. Its field is `sum_{j >= 1} (-1)^{j-1} Delta_g^j(id) / j`, the
+        only field with coefficients divisible by `p^c` whose flow has time-one map
+        `g`; its flow at integer times is the iteration of `g`, and at every `p`-adic
+        time the Mahler interpolation of the iterates (Bell, Poonen). The field is a
+        `PowerSeries` known to every precision, see `time_one_field`.
+        """
+        from .interpolation import time_one_series
+
+        return cls(p, precision, time_one_series(p, g), **kwargs)
 
     def _choose_centres(self, cost, caps, largest: int, budget: int):
         """The digits `(r_1, ..., r_d)` of the centres with the least work per point
@@ -276,38 +315,36 @@ class PAdicFlow:
         return evaluate(self.residues, coefficients, x, index)
 
     def _recenter(self, coefficients, r: int):
-        """Dense polynomials of shape `(L, *rest, deg + 1, ..., deg + 1)` re-expanded
-        around every centre `a` in `(Z/p^r)^d`: `y -> P(a + p^r y)`, of shape
-        `(L, p^{rd}, *rest, deg' + 1, ..., deg' + 1)` with `deg' = ceil(K/r) - 1`.
+        """Dense polynomials of shape `(L, *rest, deg + 1, ..., deg + 1)`, as exact
+        integers on the host, re-expanded around every centre `a` in `(Z/p^r)^d`:
+        `y -> P(a + p^r y)`, of shape `(L, p^{rd}, *rest, deg' + 1, ..., deg' + 1)` with
+        `deg' = min(deg, ceil(K/r) - 1)`.
         """
-        res, p, K, d = self.residues, self.p, self.precision, self.dimension
-        out = jnp.asarray(coefficients)
+        p, K, d, m = self.p, self.precision, self.dimension, self.modulus
+        out = coefficients
         if r == 0:
             return out[:, None]
-        centres = res.asarray(jnp.arange(p**r, dtype=jnp.int64))
-        values = out.ndim - res.extra
-        deg = out.shape[values - 1] - 1
+        side = p**r
+        centres = _host(np.arange(side), m)
+        deg = out.shape[-1] - 1
         new = min(deg, -(-K // r) - 1)
-        powers = [jnp.broadcast_to(res.constant(1), centres.shape)]
+        powers = [np.ones_like(centres)]
         for _ in range(deg):
-            powers.append(res.mul(powers[-1], centres))
+            powers.append(powers[-1] * centres % m)
         for axis in range(d):
-            values = out.ndim - res.extra
-            position = values - d + axis
-            moved = jnp.moveaxis(out, position, values - 1)
+            position = out.ndim - d + axis
+            moved = np.moveaxis(out, position, -1)
             pieces = []
             for e in range(new + 1):
-                total = res.zeros(res.shape(moved)[:-1] + (p**r,))
+                total = np.zeros(moved.shape[:-1] + (side,), dtype=out.dtype)
                 for f in range(e, deg + 1):
-                    weight = res.mul(powers[f - e], math.comb(f, e) % self.modulus)
-                    term = jnp.expand_dims(jnp.take(moved, f, axis=values - 1), -1)
-                    if res.extra:
-                        term = jnp.moveaxis(term, -1, -2)
-                    total = res.add(total, res.mul(term, weight))
-                scale = pow(p, r * e, self.modulus) if r * e < K else 0
-                pieces.append(res.mul(total, scale))
-            shifted = jnp.stack(pieces, axis=values)
-            out = jnp.moveaxis(shifted, (values - 1, values), (1 + axis, position + 1))
+                    weight = powers[f - e] * (math.comb(f, e) % m) % m
+                    total = (total + moved[..., f : f + 1] * weight) % m
+                scale = pow(p, r * e, m) if r * e < K else 0
+                pieces.append(total * scale % m)
+            shifted = np.stack(pieces, axis=-1)
+            last = shifted.ndim - 1
+            out = np.moveaxis(shifted, (last - 1, last), (1 + axis, position + 1))
         lead = out.shape[0]
         centre_axes = out.shape[1 : 1 + d]
         rest = out.shape[1 + d :]
@@ -321,51 +358,46 @@ class PAdicFlow:
         variable, and the terms with `sum_j r_j e_j >= K` are dropped at the end.
         Returns the polynomials, shape `(L, p^{sum r}, *rest, M')`, and their layout.
         """
-        res, p, K, d = self.residues, self.p, self.precision, self.dimension
+        p, K, d, m = self.p, self.precision, self.dimension, self.modulus
         deg, caps = layout
-        out = jnp.asarray(coefficients)[:, None]
+        out = coefficients[:, None]
         if not any(r):
             return out, (deg, caps, None, None)
         exponents = simplex(d, deg, caps)
         position = {e: i for i, e in enumerate(exponents)}
-        tail = out.shape[out.ndim - res.extra :]
-        monomial = out.ndim - res.extra - 1
         for j in range(d):
             if not r[j]:
                 continue
             side = p ** r[j]
-            centres = res.asarray(jnp.arange(side, dtype=jnp.int64))
-            powers = [jnp.broadcast_to(res.constant(1), centres.shape)]
+            centres = _host(np.arange(side), m)
+            powers = [np.ones_like(centres)]
             for _ in range(caps[j]):
-                powers.append(res.mul(powers[-1], centres))
-            lead, rest = out.shape[:2], out.shape[2:monomial]
-            shape = lead + (side,) + rest + (len(exponents),)
-            total = res.zeros(shape)
+                powers.append(powers[-1] * centres % m)
+            lead, rest = out.shape[:2], out.shape[2:-1]
+            total = np.zeros(lead + (side,) + rest + (len(exponents),), dtype=out.dtype)
             for s in range(caps[j] + 1):
                 pairs = []
                 for e in exponents:
                     f = e[:j] + (e[j] + s,) + e[j + 1 :]
                     if f in position:
                         power = r[j] * e[j]
-                        scale = pow(p, power, self.modulus) if power < K else 0
-                        weight = math.comb(f[j], e[j]) * scale % self.modulus
+                        scale = pow(p, power, m) if power < K else 0
+                        weight = math.comb(f[j], e[j]) * scale % m
                         pairs.append((position[f], position[e], weight))
                 if not pairs:
                     continue
                 source, target, weights = zip(*pairs)
-                weights = res.asarray(np.array(weights, dtype=object))
-                weights = res.mul(powers[s][:, None], weights[None, :])
-                weights = weights.reshape(
-                    (1, 1, side) + (1,) * len(rest) + (len(pairs),) + tail
-                )
-                taken = jnp.take(out, jnp.asarray(source), axis=monomial)
-                product = res.mul(jnp.expand_dims(taken, 2), weights)
-                index = (Ellipsis, jnp.asarray(target)) + (slice(None),) * res.extra
-                total = res.add(total, res.zeros(shape).at[index].set(product))
+                weights = powers[s][:, None] * _host(np.array(weights, object), m) % m
+                weights = weights.reshape((1, 1, side) + (1,) * len(rest) + (-1,))
+                taken = out[..., list(source)][:, :, None]
+                # For a fixed shift `s` the targets are distinct.
+                total[..., list(target)] = (
+                    total[..., list(target)] + taken * weights
+                ) % m
             out = total.reshape((lead[0], lead[1] * side) + total.shape[3:])
         new = (deg, caps, tuple(r), K - 1)
-        keep = jnp.asarray([position[e] for e in simplex(d, *new)])
-        return jnp.take(out, keep, axis=out.ndim - res.extra - 1), new
+        keep = [position[e] for e in simplex(d, *new)]
+        return out[..., keep], new
 
     def _divided_series(self, start):
         """`[g, Dg, D^2 g / 2!, ...]` modulo `p^K`, `self.terms` entries, for the
@@ -587,10 +619,18 @@ class PAdicFlow:
         the foot is `x` itself and `s` is the rectifying coordinate:
         `phi_t(z) = phi_{s + t}(x)`.
 
-        Returns `(s, w)`; values for `z` outside the ball are meaningless.
+        Returns `(s, w)`. A point `z` outside the ball has no flow-box coordinates
+        around `x`: that raises a `ValueError` (an error at run time under `jit`); use
+        `orbit_time` to test membership instead. At an equilibrium the ball is the
+        point itself, with `s = 0` and `w = x`.
         """
+        res = self.residues
         batch, (x, z) = self._flatten((x, True), (z, True))
-        time, foot, _ = self._rectify(x, z)
+        time, foot, level = self._rectify(x, z)
+        inside = (res.valuation(res.sub(z, x)) >= level[:, None]).all(axis=1)
+        time = _require(
+            time, inside, "`z` lies outside the ball B(x, |f(x)|) of the flow box."
+        )
         return self._scalars(batch, time), self._unflatten(batch, foot)
 
     def orbit_time(self, x, z):
@@ -771,12 +811,11 @@ class TimeDependentFlow:
         digits = 2 if self.p == 2 else 1
         t0, t1 = res.asarray(t0), res.asarray(t1)
         elapsed = res.sub(t1, t0)
-        try:
-            concrete = np.asarray(res.low(elapsed, digits))
-        except Exception:
-            concrete = None
-        if concrete is not None and concrete.any():
-            raise ValueError(f"`t1 - t0` must be divisible by {self.step}.")
+        elapsed = _require(
+            elapsed,
+            res.low(elapsed, digits) == 0,
+            f"`t1 - t0` must be divisible by {self.step}.",
+        )
         s = res.shift(elapsed, digits)
         x = res.asarray(x)
         points = jnp.expand_dims(x, x.ndim - res.extra) if self.dimension == 1 else x

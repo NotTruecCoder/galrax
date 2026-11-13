@@ -165,7 +165,7 @@ class FormalGroupFlow:
         if any(_valuation(int(v), p) < 1 + c for v in z.reshape(-1) if v):
             raise ValueError(f"The parameters must be divisible by p^{1 + c}.")
         u = np.vectorize(lambda v: int(v) // p, otypes=[object])(z)
-        s, _ = self.flow.rectify(np.zeros(u.shape, dtype=np.int64), u.astype(np.int64))
+        s, _ = self.flow.rectify(np.zeros(u.shape, dtype=object), u)
         s = np.asarray(s, dtype=object)
         return s * p ** (1 + c) % p ** (K + 1)
 
@@ -178,7 +178,7 @@ class FormalGroupFlow:
         if any(_valuation(int(v), p) < 1 + c for v in w.reshape(-1) if v):
             raise ValueError(f"The logarithms must be divisible by p^{1 + c}.")
         s = np.vectorize(lambda v: int(v) // p ** (1 + c), otypes=[object])(w)
-        u = self.flow.flow(s.astype(np.int64), np.zeros(s.shape, dtype=np.int64))
+        u = self.flow.flow(s, np.zeros(s.shape, dtype=object))
         return np.asarray(u, dtype=object) * p % p ** (K + 1)
 
     def multiple(self, t, z):
@@ -266,6 +266,70 @@ class EllipticCurve:
         """`h(x(P)) = log max(|num|, |den|)`."""
         x = Fraction(P[0])
         return math.log(max(abs(x.numerator), abs(x.denominator), 1))
+
+
+def height_bound(
+    points,
+    n: int,
+    p: int,
+    curve: EllipticCurve | None = None,
+    gram_eigenvalue: float | int | None = None,
+    mu: float | int | None = None,
+) -> int:
+    """An upper bound for every finite exponent of `logarithmic_exponents(points, n,
+    p, curve)`, from heights alone (points over `Q`, so `D = 1`).
+
+    - For the multiplicative group, `s <= ((n + 1) h_* + log 2) / log p` with
+      `h_* = max_j h(alpha_j)`: a non-zero `beta = 1/(gamma - 1)` with
+      `v_p(beta) = -s` has `h(beta) >= s log p`, and `h(gamma - 1) <= h(gamma) + log 2`
+      with `gamma = prod alpha_j^{k_j}`, `sum |k_j| <= n + 1`. Computed exactly as the
+      largest `s` with `p^s <= 2 H_*^{n + 1}`.
+    - For an elliptic curve, `s <= (rho(H) (n + 1)^2 + mu_E) / (2 log p)`, where
+      `rho(H)` (`gram_eigenvalue`) bounds the largest eigenvalue of the Gram matrix of
+      the Neron--Tate height `h^ = lim 4^{-k} h(x([2^k] Q))` on the points, and `mu_E`
+      (`mu`) bounds `h(x(Q)) - h^(Q)`. Both must be supplied as upper bounds, for
+      example from Silverman's explicit estimates.
+    """
+    p, n = int(p), int(n)
+    if p == 2:
+        raise ValueError("The height certificate needs an odd p.")
+    if curve is None:
+        top = max(
+            max(abs(Fraction(a).numerator), Fraction(a).denominator) for a in points
+        )
+        target = 2 * top ** (n + 1)
+        s = 0
+        while p ** (s + 1) <= target:
+            s += 1
+        return s
+    if gram_eigenvalue is None or mu is None:
+        raise ValueError(
+            "The elliptic bound needs `gram_eigenvalue` (rho(H)) and `mu` (mu_E)."
+        )
+    bound = (float(gram_eigenvalue) * (n + 1) ** 2 + float(mu)) / (2 * math.log(p))
+    # Round up a hair so that floating point can only make the bound weaker.
+    return math.floor(bound * (1 + 1e-12) + 1e-12)
+
+
+def linear_degree(
+    points,
+    p: int,
+    threshold: int,
+    curve: EllipticCurve | None = None,
+    gram_eigenvalue: float | int | None = None,
+    mu: float | int | None = None,
+) -> int:
+    """The last degree `n_sigma` up to which every exponent is at most the threshold
+    `sigma` of `NormalForm`, by `height_bound`: for independent points, the normal form
+    has no terms of degree `2, ..., n_sigma` besides the linear part. Returns `1` when
+    already degree `2` may keep terms.
+    """
+    n = 1
+    while height_bound(points, n + 1, p, curve, gram_eigenvalue, mu) <= threshold:
+        n += 1
+        if n > 10**6:
+            raise RuntimeError("The height bound does not grow.")
+    return n
 
 
 def logarithmic_exponents(points, n: int, p: int, curve: EllipticCurve | None = None):
