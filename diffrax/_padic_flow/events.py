@@ -46,15 +46,22 @@ class EventSet:
     - `zero_bound`: for a single condition, Strassmann's bound on the number of exact
         zeros of `t -> g(phi_t(x))` in `Z_p`, counted with multiplicity; `None` if the
         condition vanishes identically to the working precision, or for systems.
+    - `period`: `M`, prime to `p`; a ball then stands for `t = t_0 mod M p^level`.
+        It is `1` for flows, and for the hitting times of a map it is the part of
+        the period modulo `p` that is prime to `p`.
     """
 
     balls: list
     p: int
     depth: int
     zero_bound: int | None = field(default=None)
+    period: int = 1
 
     def __contains__(self, t) -> bool:
-        return any(ball.contains((int(t),), self.p) for ball in self.balls)
+        return any(
+            (int(t) - ball.center[0]) % (self.period * self.p**ball.level) == 0
+            for ball in self.balls
+        )
 
     def __bool__(self) -> bool:
         return bool(self.balls)
@@ -64,8 +71,9 @@ class EventSet:
         return min((ball.center[0] for ball in self.balls), default=None)
 
     def measure(self) -> float:
-        """The Haar measure of the set, `sum p^{-level}`."""
-        return float(sum(float(self.p) ** -ball.level for ball in self.balls))
+        """The Haar measure of the set, `sum 1 / (M p^level)`."""
+        total = sum(float(self.p) ** -ball.level for ball in self.balls)
+        return float(total / self.period)
 
 
 def _intersect(first: list, second: list, p: int) -> list:
