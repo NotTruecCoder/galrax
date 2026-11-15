@@ -88,6 +88,14 @@ doubling = pf.PAdicMap(5, [0, 2])  # x -> 2x on Z_5
 print(doubling.minimal_decomposition(4))  # the spheres |x| = 5^-k are minimal; 0 is fixed
 print(pf.PAdicMap(2, lambda x: x + (x * x | 5)).is_minimal(16))  # Klimov-Shamir: True
 
+qcg = pf.PAdicMap(2, [1, 3, 2])  # x -> 2x^2 + 3x + 1 mod 2^64
+y = qcg.iterate(0, 10**30, 64)  # jump ahead, same cost for every n
+print(qcg.index(0, y, 64) == 10**30 % 2**64)  # True: the index of a value
+mba = pf.PAdicMap(2, [3, 5, 2])  # an MBA permutation polynomial
+print(mba.iterate(mba(12345, 32), -1, 32))  # 12345: n = -1 is the inverse, 1/3 a cube root
+loop = pf.PAdicMap(11, [1, -3])  # x <- 1 - 3x from x = 1, over Z
+print(bool(loop.hitting_times(1, pf.PAdicEvent([-100, 1], 2), 3)))  # False: never 100
+
 # x' = 3x + 3y^2, y' = 6y + 3x^2 + 3xy: the resonance 2 * 3 = 6 keeps x^2 in y'.
 resonant = pf.PAdicFlow(3, 8, [{(1, 0): 3, (0, 2): 3}, {(0, 1): 6, (2, 0): 3, (1, 1): 3}])
 form = resonant.normal_form((0, 0))
@@ -289,7 +297,8 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 | `NormalForm` | The Poincaré–Dulac normal form in any dimension, with `radius`, `resonant_terms`, `certificate`, `flow_map`. |
 | `FormalGroupFlow` | The flow of a formal group (`multiplicative`, `weierstrass`): `logarithm`, `exponential`, `multiple`. |
 | `EllipticCurve`, `logarithmic_exponents` | Exact rational points on a Weierstrass curve, and the Smith exponents for eigenvalues $\log P_i$. |
-| `PAdicMap`, `Cycle`, `Component` | Discrete maps: cycle trees, minimal decompositions, minimality. |
+| `PAdicMap`, `Cycle`, `Component` | Discrete maps: cycle trees, minimal decompositions, minimality; `iterate` ($T^n$ for large, negative or $p$-adic $n$), `index`, `hitting_times` of a loop. |
+| `lie_bracket`, `commutator` | $[X, Y]$ of two fields, and $g h g^{-1} h^{-1}$ of two maps congruent to the identity. |
 | `KoopmanOperator`, `advection_diffusion` | The Koopman operator of a flow, and transport plus ultrametric diffusion. |
 | `PowerSeries` | Analytic field components: `exp`, `log1p`, `geometric`, sums and products. |
 | `Residues`, `Limbs` | Arithmetic in $\mathbb{Z}/p^K$ on `int64` arrays, with one word, two words or any number of limbs. |
