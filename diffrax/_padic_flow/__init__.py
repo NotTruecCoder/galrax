@@ -10,6 +10,8 @@ from .formal import (
     logarithmic_exponents as logarithmic_exponents,
 )
 from .interpolation import (
+    commutator as commutator,
+    lie_bracket as lie_bracket,
     MinimalAction as MinimalAction,
     time_one_field as time_one_field,
 )

@@ -16,6 +16,7 @@ with any number of digits.
 from ._padic_flow import (
     advection_diffusion as advection_diffusion,
     Ball as Ball,
+    commutator as commutator,
     Component as Component,
     Cycle as Cycle,
     EllipticCurve as EllipticCurve,
@@ -24,6 +25,7 @@ from ._padic_flow import (
     FormalGroupFlow as FormalGroupFlow,
     height_bound as height_bound,
     KoopmanOperator as KoopmanOperator,
+    lie_bracket as lie_bracket,
     Limbs as Limbs,
     linear_degree as linear_degree,
     Linearization as Linearization,

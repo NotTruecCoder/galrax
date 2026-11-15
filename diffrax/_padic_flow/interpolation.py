@@ -20,8 +20,14 @@ import numpy as np
 
 from .arithmetic import is_prime, valuation
 from .equilibria import _determinant
-from .normal_form import _multiply, smith
-from .polynomial import evaluate_exact, parse_field, reduce
+from .normal_form import _multiply, _substitute, smith
+from .polynomial import (
+    _derivative,
+    _multiply_add,
+    evaluate_exact,
+    parse_field,
+    reduce,
+)
 from .roots import Ball
 from .series import PowerSeries
 
@@ -175,6 +181,68 @@ def time_one_series(p: int, g) -> list[PowerSeries]:
         return PowerSeries._build(d, terms, lowest)
 
     return [component(i) for i in range(d)]
+
+
+def lie_bracket(p: int, digits: int, X, Y) -> list[dict]:
+    """`[X, Y] = (X . grad) Y - (Y . grad) X` modulo `p^digits`, for fields given
+    like a vector field.
+    """
+    m = p**digits
+    X, Y = _parse(X, p, digits), _parse(Y, p, digits)
+    if len(X) != len(Y):
+        raise ValueError("The fields must live on the same Z_p^d.")
+    out = []
+    for i in range(len(X)):
+        total = {}
+        for j in range(len(X)):
+            _multiply_add(total, X[j], _derivative(Y[i], j, m), m)
+            minus = {e: -v % m for e, v in Y[j].items()}
+            _multiply_add(total, minus, _derivative(X[i], j, m), m)
+        out.append({e: v for e, v in total.items() if v})
+    return out
+
+
+def _subtract(a: dict, b: dict, m: int) -> dict:
+    out = dict(a)
+    for e, v in b.items():
+        out[e] = (out.get(e, 0) - v) % m
+    return {e: v for e, v in out.items() if v}
+
+
+def commutator(p: int, digits: int, g, h) -> list[dict]:
+    """`g o h o g^{-1} o h^{-1}` modulo `p^digits`, for maps `g = id + p^c ...`,
+    `h = id + p^c ...` (`c >= 1`) given like vector fields. It is
+    `id - [X, Y]` modulo `p^{3c}` for the fields `X`, `Y` of `g` and `h`.
+
+    `g^{-1}` is the limit of `y <- id - (g - id) o y`, which gains `c` digits a
+    step. A monomial of degree `e` in any word in `g`, `h` and their inverses has
+    valuation `>= c (e - 1) / (D - 1)`, `D` the largest degree of `g - id` and
+    `h - id`, so higher degrees are dropped.
+    """
+    m = p**digits
+    c = min(map_valuation(g, p, digits), map_valuation(h, p, digits))
+    if c < 1:
+        raise ValueError("The maps must be congruent to the identity modulo p.")
+    g, h = _parse(g, p, digits), _parse(h, p, digits)
+    if len(g) != len(h):
+        raise ValueError("The maps must act on the same Z_p^d.")
+    d = len(g)
+    identity = [{tuple(int(i == j) for i in range(d)): 1} for j in range(d)]
+    moved = [_displacement(f, m) for f in (g, h)]
+    top = max((sum(e) for f in moved for poly in f for e in poly), default=1)
+    cap = 1 + math.ceil(digits * max(top - 1, 0) / c)
+
+    def compose(f, k):
+        return [_substitute(poly, k, cap, m) for poly in f]
+
+    def inverse(shift):
+        y = identity
+        for _ in range(-(-digits // c)):
+            y = [_subtract(i, f, m) for i, f in zip(identity, compose(shift, y))]
+        return y
+
+    words = compose(h, compose(inverse(moved[0]), inverse(moved[1])))
+    return compose(g, words)
 
 
 class MinimalAction:
