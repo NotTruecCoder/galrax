@@ -16,13 +16,16 @@ with any number of digits.
 from ._padic_flow import (
     advection_diffusion as advection_diffusion,
     Ball as Ball,
+    chabauty_zeros as chabauty_zeros,
     commutator as commutator,
     companion as companion,
     Component as Component,
     Cycle as Cycle,
+    disc_differentials as disc_differentials,
     EllipticCurve as EllipticCurve,
     Equilibrium as Equilibrium,
     EventSet as EventSet,
+    FormalGroup as FormalGroup,
     FormalGroupFlow as FormalGroupFlow,
     height_bound as height_bound,
     KoopmanOperator as KoopmanOperator,
@@ -48,4 +51,6 @@ from ._padic_flow import (
     smith_exponent_bound as smith_exponent_bound,
     time_one_field as time_one_field,
     TimeDependentFlow as TimeDependentFlow,
+    tiny_integrals as tiny_integrals,
+    weierstrass_omega as weierstrass_omega,
 )

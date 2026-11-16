@@ -24,8 +24,10 @@ from fractions import Fraction
 
 import numpy as np
 
-from .arithmetic import valuation
+from .arithmetic import simplex, valuation
+from .events import EventSet
 from .flow import PAdicFlow
+from .roots import Ball, vanishing_set
 from .series import PowerSeries
 
 
@@ -94,6 +96,20 @@ def weierstrass_differential(a, terms: int) -> list[Fraction]:
     return _multiply(dx, _inverse(den, len(den)), len(den))[:terms]
 
 
+def weierstrass_omega(a):
+    """`n -> ` the coefficient of `z^n` in `omega` of `weierstrass_differential`,
+    computed in growing blocks.
+    """
+    cache = []
+
+    def omega(n):
+        if n >= len(cache):
+            cache[:] = weierstrass_differential(a, 2 * n + 16)
+        return cache[n]
+
+    return omega
+
+
 class FormalGroupFlow:
     """The flow of `du/ds = p^c / omega(p u)` on `Z_p`, for a one-dimensional formal
     group law over `Z_p` with invariant differential `omega(z) dz`. It is translation
@@ -146,14 +162,7 @@ class FormalGroupFlow:
         """The formal group of `y^2 + a_1 xy + a_3 y = x^3 + a_2 x^2 + a_4 x + a_6`,
         with integral `a = (a_1, a_2, a_3, a_4, a_6)`, in the parameter `z = -x/y`.
         """
-        cache = {"coefficients": []}
-
-        def omega(n):
-            if n >= len(cache["coefficients"]):
-                cache["coefficients"] = weierstrass_differential(a, 2 * n + 16)
-            return cache["coefficients"][n]
-
-        return cls(p, precision, omega, **kwargs)
+        return cls(p, precision, weierstrass_omega(a), **kwargs)
 
     def logarithm(self, z):
         """`log(z)` modulo `p^{K + 1}` for group parameters `z` of valuation at least
@@ -187,6 +196,158 @@ class FormalGroupFlow:
         w = self.logarithm(z)
         t = np.asarray(t, dtype=object) % p ** (K + 1)
         return self.exponential(t * w % p ** (K + 1))
+
+
+def _product(a: dict, b: dict, top: int) -> dict:
+    out = {}
+    for ea, ca in a.items():
+        for eb, cb in b.items():
+            e = tuple(i + j for i, j in zip(ea, eb))
+            if sum(e) <= top:
+                out[e] = out.get(e, 0) + ca * cb
+    return out
+
+
+class FormalGroup:
+    """A `d`-dimensional formal group over `Z_p` from its invariant differentials
+    `omega_i = sum_j Omega_ij(z) dz_j`, `Omega(0) = I`, so that `d log = Omega dz`.
+
+    The fields `X_i`, the columns of `p^c Omega(p u)^{-1}`, satisfy the hypothesis of
+    `PAdicFlow`, commute, and translate the logarithm:
+    `log(p phi^i_s(u)) = log(p u) + p^{1 + c} s e_i`. So the chart
+    `F(t) = phi^1_{t_1} o ... o phi^d_{t_d}(0)` has `log(p F(t)) = p^{1 + c} t`, and the
+    logarithm is `p^{1 + c}` times its coordinates.
+
+    **Arguments:**
+
+    - `p`, `precision`: as for `PAdicFlow`; parameters `z = p u` are known modulo
+        `p^{K + 1}`.
+    - `omega`: `omega(i, j, e)` is the coefficient of `z^e` in `Omega_ij`, a `p`-adic
+        integer.
+    - `dimension`: `d`.
+    - `c`: the valuation of the fields; at least `1` (`2` for `p = 2`).
+
+    **Attributes:** `fields` (one list of `PowerSeries` per `X_i`), `flows`.
+    """
+
+    def __init__(self, p, precision, omega, dimension, c=None, **kwargs):
+        p, K, d = int(p), int(precision), int(dimension)
+        c = (2 if p == 2 else 1) if c is None else int(c)
+        zero = (0,) * d
+        if any(
+            Fraction(omega(i, j, zero)) != (i == j) for i in range(d) for j in range(d)
+        ):
+            raise ValueError("The invariant differentials must have Omega(0) = I.")
+        self.p, self.precision, self.dimension, self.c = p, K, d, c
+        self._omega, self._inverses = omega, {}
+
+        def component(k, i):
+            return PowerSeries._build(
+                d, lambda q, digits: self._inverse(int(digits))[k][i], lambda q: c
+            )
+
+        self.fields = [[component(k, i) for k in range(d)] for i in range(d)]
+        self.flows = [PAdicFlow(p, K, field, **kwargs) for field in self.fields]
+
+    @classmethod
+    def product(cls, p, precision, omegas, **kwargs) -> "FormalGroup":
+        """The product of one-dimensional groups, `omegas[i](n)` the coefficient of
+        `z^n` in the `i`-th invariant differential (as for `FormalGroupFlow`).
+        """
+        d = len(omegas)
+
+        def omega(i, j, e):
+            if i != j or any(e[k] for k in range(d) if k != i):
+                return 0
+            return omegas[i](e[i])
+
+        return cls(p, precision, omega, d, **kwargs)
+
+    def _inverse(self, digits: int):
+        """`p^c Omega(p u)^{-1}` cut to the terms that can be non-zero modulo
+        `p^digits`: a degree-`n` term has valuation at least `c + n`.
+        """
+        if digits not in self._inverses:
+            p, c, d = self.p, self.c, self.dimension
+            top = max(digits - c - 1, 0)
+            N = [
+                [
+                    {
+                        e: Fraction(self._omega(i, j, e)) * p ** sum(e)
+                        for e in simplex(d, top)
+                        if any(e) and self._omega(i, j, e)
+                    }
+                    for j in range(d)
+                ]
+                for i in range(d)
+            ]
+            one = {(0,) * d: Fraction(1)}
+            B = [[one if i == j else {} for j in range(d)] for i in range(d)]
+            for _ in range(top + 1):  # B = I - N B, one more degree each time
+                B = [
+                    [
+                        _subtract_all(
+                            one if i == j else {},
+                            [_product(N[i][k], B[k][j], top) for k in range(d)],
+                        )
+                        for j in range(d)
+                    ]
+                    for i in range(d)
+                ]
+            self._inverses[digits] = [
+                [{e: v * p**c for e, v in entry.items() if v} for entry in row]
+                for row in B
+            ]
+        return self._inverses[digits]
+
+    def _rows(self, values):
+        return np.asarray(values, dtype=object).reshape(-1, self.dimension)
+
+    def chart(self, t):
+        """`F(t) = phi^1_{t_1} o ... o phi^d_{t_d}(0)` modulo `p^K`, for times of
+        shape `(..., d)`.
+        """
+        shape = np.shape(np.asarray(t, dtype=object))
+        times, d = self._rows(t), self.dimension
+        y = np.zeros_like(times)
+        for i in reversed(range(d)):
+            moved = self.flows[i].flow(times[:, i], y[:, 0] if d == 1 else y)
+            y = self._rows(np.asarray(np.asarray(moved), dtype=object))
+        return y.reshape(shape)
+
+    def logarithm(self, z):
+        """`log(z)` modulo `p^{K + 1}` for parameters `z` (shape `(..., d)`) of
+        valuation at least `1 + c`, given modulo `p^{K + 1}`: Newton's method on the
+        chart, `t <- t + (z / p - F(t)) / p^c`, gains a digit a step.
+        """
+        p, c, K = self.p, self.c, self.precision
+        shape = np.shape(np.asarray(z, dtype=object))
+        z = self._rows(z) % p ** (K + 1)
+        if np.any(z % p ** (1 + c)):
+            raise ValueError(f"The parameters must be divisible by p^{1 + c}.")
+        u, t = z // p, np.zeros_like(z)
+        for _ in range(K - c):
+            residual = (u - self._rows(self.chart(t))) % p**K
+            t = (t + residual // p**c) % p ** (K - c)
+        return (t * p ** (1 + c) % p ** (K + 1)).reshape(shape)
+
+    def exponential(self, w):
+        """`exp(w)` modulo `p^{K + 1}` for `w` of valuation at least `1 + c`."""
+        p, c, K = self.p, self.c, self.precision
+        shape = np.shape(np.asarray(w, dtype=object))
+        w = self._rows(w) % p ** (K + 1)
+        if np.any(w % p ** (1 + c)):
+            raise ValueError(f"The logarithms must be divisible by p^{1 + c}.")
+        u = self._rows(self.chart(w // p ** (1 + c)))
+        return (u * p % p ** (K + 1)).reshape(shape)
+
+
+def _subtract_all(a: dict, terms: list) -> dict:
+    out = dict(a)
+    for poly in terms:
+        for e, v in poly.items():
+            out[e] = out.get(e, 0) - v
+    return {e: v for e, v in out.items() if v}
 
 
 class EllipticCurve:
@@ -360,3 +521,108 @@ def logarithmic_exponents(points, n: int, p: int, curve: EllipticCurve | None = 
             else:
                 out[(m, i)] = curve.depth(curve.combination(k, points), p)
     return out
+
+
+#
+# Chabauty--Coleman in residue discs of y^2 = f(x)
+#
+
+
+def _compose(f: list, x: list, n: int) -> list:
+    """`f(x(s))` for a polynomial `f` (coefficients) and a series `x`."""
+    out = [Fraction(0)] * n
+    for c in reversed(f):
+        out = _multiply(out, x, n)
+        out[0] += c
+    return out
+
+
+def disc_differentials(f, p: int, point, n: int) -> tuple[list, list]:
+    """The parameter `s` in `Z_p` of the residue disc of a rational point
+    `P_0 = (x_0, y_0)` of `y^2 = f(x)` (good reduction, `p` odd): `x = x_0 + p s` if
+    `p` does not divide `y_0`, else `y = y_0 + p s`. Returns the series `x(s)` and
+    `w(s)` with `dx / y = w(s) ds`, `n` terms each, in exact rationals.
+    """
+    f = [Fraction(c) for c in f]
+    x0, y0 = (Fraction(v) for v in point)
+    if sum(c * x0**k for k, c in enumerate(f)) != y0 * y0:
+        raise ValueError("The point is not on the curve.")
+    pad = [Fraction(0)] * n
+    df = [k * c for k, c in enumerate(f)][1:]
+    if _valuation(y0, p) == 0:
+        x = ([x0, Fraction(p)] + pad)[:n]
+        u = [c / y0**2 for c in _compose(f, x, n)]
+        u[0] -= 1
+        root, power, binomial = list(pad), [Fraction(1)] + pad[1:], Fraction(1)
+        for k in range(n):  # (1 + u)^{-1/2}
+            root = [a + binomial * b for a, b in zip(root, power)]
+            power, binomial = (
+                _multiply(power, u, n),
+                binomial * (-Fraction(1, 2) - k) / (k + 1),
+            )
+        return x, [p * c / y0 for c in root]
+    square = _multiply([y0, Fraction(p)], [y0, Fraction(p)], n)
+    x = [x0] + pad[1:]
+    for _ in range(n.bit_length() + 2):  # Newton on f(x) = y^2
+        step = _multiply(
+            [a - b for a, b in zip(_compose(f, x, n), square)],
+            _inverse(_compose(df, x, n), n),
+            n,
+        )
+        x = [a - b for a, b in zip(x, step)]
+    return x, [2 * p * c for c in _inverse(_compose(df, x, n), n)]
+
+
+def _tiny(f, p: int, point, n: int) -> list[list]:
+    """`int_{P_0}^{P(s)} x^k dx / y`, `k < g`, as series in `s`."""
+    genus = (len(f) - 2) // 2
+    x, w = disc_differentials(f, p, point, n)
+    out, power = [], [Fraction(1)] + [Fraction(0)] * (n - 1)
+    for _ in range(genus):
+        integrand = _multiply(power, w, n)
+        out.append([Fraction(0)] + [c / (m + 1) for m, c in enumerate(integrand[:-1])])
+        power = _multiply(power, x, n)
+    return out
+
+
+def _parameter(p: int, start, end) -> Fraction:
+    (x0, y0), (x1, y1) = start, end
+    s = (Fraction(x1) - x0) / p if _valuation(y0, p) == 0 else (Fraction(y1) - y0) / p
+    if min(_valuation(Fraction(x1) - x0, p), _valuation(Fraction(y1) - y0, p)) < 1:
+        raise ValueError("The points are not in the same residue disc.")
+    return s
+
+
+def tiny_integrals(f, p: int, precision: int, start, end) -> list[int]:
+    """`int_start^end x^k dx / y`, `k < g`, modulo `p^precision`, for rational points
+    in the same residue disc: the logarithm on the Jacobian of `[end - start]`.
+    """
+    m, n = p**precision, 2 * precision + 8
+    s = _residue(_parameter(p, start, end), m)
+    return [
+        sum(_residue(c, m) * pow(s, k, m) for k, c in enumerate(series)) % m
+        for series in _tiny(f, p, start, n)
+    ]
+
+
+def chabauty_zeros(f, p: int, precision: int, point, annihilator) -> EventSet:
+    """The zeros `s` in `Z_p` of `int_{P_0}^{P(s)} omega` in the residue disc of the
+    rational point `P_0` (parameter as in `disc_differentials`), for
+    `omega = sum_k a_k x^k dx / y` with `p`-adic integer `a_k`. After dividing out
+    the content, `zero_bound` is Strassmann's bound, which counts the zeros when
+    the balls isolate them. With `omega` killing the Mordell--Weil group, every
+    rational point of the disc is among the zeros.
+    """
+    m, n = p**precision, 2 * precision + 8
+    total = [0] * n
+    for a, series in zip(annihilator, _tiny(f, p, point, n)):
+        a = _residue(a, m)
+        total = [(t + a * _residue(c, m)) % m for t, c in zip(total, series)]
+    content = min(valuation(c, p, precision) for c in total)
+    if content >= precision:
+        return EventSet([Ball((0,), 0)], p, 0, None)
+    digits = precision - content
+    poly = {(k,): c // p**content % p**digits for k, c in enumerate(total) if c}
+    bound = max(k for (k,), c in poly.items() if c % p)
+    balls = vanishing_set([poly], 1, p, digits, digits)
+    return EventSet(sorted(balls, key=lambda b: b.center), p, digits, bound)

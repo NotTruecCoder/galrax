@@ -3,11 +3,16 @@ from .equilibria import Equilibrium as Equilibrium, Linearization as Linearizati
 from .events import EventSet as EventSet, PAdicEvent as PAdicEvent
 from .flow import PAdicFlow as PAdicFlow, TimeDependentFlow as TimeDependentFlow
 from .formal import (
+    chabauty_zeros as chabauty_zeros,
+    disc_differentials as disc_differentials,
     EllipticCurve as EllipticCurve,
+    FormalGroup as FormalGroup,
     FormalGroupFlow as FormalGroupFlow,
     height_bound as height_bound,
     linear_degree as linear_degree,
     logarithmic_exponents as logarithmic_exponents,
+    tiny_integrals as tiny_integrals,
+    weierstrass_omega as weierstrass_omega,
 )
 from .interpolation import (
     commutator as commutator,
