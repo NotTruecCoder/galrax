@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from diffrax.padic_flow import matrix_power_index, PAdicMap
+from galrax.padic import matrix_power_index, PAdicMap
 
 
 GENERATOR = PAdicMap(2, [1, 3, 2])  # 2x^2 + 3x + 1, full period modulo 2^k

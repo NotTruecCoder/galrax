@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from diffrax.group_algebra import (
+from galrax.groups import (
     convolution,
     exact_linear_solution,
     FourierTransform,
@@ -13,7 +13,7 @@ from diffrax.group_algebra import (
     Lawson,
     solve_group_ode,
 )
-from diffrax.ultrametric import KozyrevTransform, PAdicIntegers, UltrametricOperator
+from galrax.ultrametric import KozyrevTransform, PAdicIntegers, UltrametricOperator
 
 
 SIZES = [(2, 1), (2, 4), (3, 3), (5, 2), (7, 1)]

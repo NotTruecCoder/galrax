@@ -2,7 +2,7 @@ from fractions import Fraction
 
 import numpy as np
 import pytest
-from diffrax.padic_flow import Ball, PAdicEvent, PAdicFlow, PAdicMap
+from galrax.padic import Ball, PAdicEvent, PAdicFlow, PAdicMap
 
 
 def _orbit(mapping, x, count, level):

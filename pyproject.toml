@@ -9,65 +9,48 @@ dev = [
   "ruff==0.13.0",
   "toml-sort==0.23.1"
 ]
-docs = [
-  "hippogriffe==0.2.2",
-  "griffe==1.7.3",
-  "mkdocs==1.6.1",
-  "mkdocs-include-exclude-files==0.1.0",
-  "mkdocs-ipynb==0.1.1",
-  "mkdocs-material==9.6.7",
-  "mkdocstrings==0.28.3",
-  "mkdocstrings-python==1.16.8",
-  "pygments==2.20.0",
-  "pymdown-extensions==10.21.2"
-]
 tests = [
   "beartype",
   "jaxlib",
-  "optax",
+  "matplotlib",
   "pytest",
-  "scipy",
-  "tqdm"
+  "scipy"
 ]
 
 [project]
 authors = [
-  {email = "contact@kidger.site", name = "Patrick Kidger"}
+  {name = "Кирилл"}
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
-  "Intended Audience :: Developers",
-  "Intended Audience :: Financial and Insurance Industry",
-  "Intended Audience :: Information Technology",
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: Apache Software License",
   "Natural Language :: English",
   "Programming Language :: Python :: 3",
-  "Topic :: Scientific/Engineering :: Artificial Intelligence",
-  "Topic :: Scientific/Engineering :: Information Analysis",
   "Topic :: Scientific/Engineering :: Mathematics"
 ]
-dependencies = ["jax>=0.4.38", "jaxtyping>=0.2.24", "typing_extensions>=4.5.0", "equinox>=0.11.10", "lineax>=0.0.5", "optimistix>=0.1.0", "wadler_lindig>=0.1.1"]
-description = "GPU+autodiff-capable ODE/SDE/CDE solvers written in JAX."
-keywords = ["jax", "dynamical-systems", "differential-equations", "deep-learning", "equinox", "neural-differential-equations", "diffrax"]
+# diffrax._term.WrapTerm is private, hence the upper bound.
+dependencies = ["diffrax>=0.7,<0.8", "equinox>=0.11.10", "jax>=0.4.38", "jaxtyping>=0.2.24", "numpy"]
+description = "Exact p-adic dynamics, ultrametric diffusion and differential equations on finite groups, in JAX."
+keywords = ["jax", "p-adic", "dynamical-systems", "differential-equations", "number-theory", "diffrax"]
 license = {file = "LICENSE"}
-name = "diffrax"
+name = "galrax"
 readme = "README.md"
 requires-python = ">=3.11"
-urls = {repository = "https://github.com/patrick-kidger/diffrax"}
-version = "0.7.2"
+urls = {repository = "https://github.com/NotTruecCoder/galrax"}
+version = "0.1.0"
 
 [tool.hatch.build]
-include = ["diffrax/*"]
+include = ["galrax/*", "NOTICE"]
 
 [tool.pyright]
-include = ["diffrax", "tests"]
+include = ["galrax", "test"]
 reportIncompatibleMethodOverride = true
 reportIncompatibleVariableOverride = false # Incompatible with eqx.AbstractVar
 reportUnnecessaryTypeIgnoreComment = true
 
 [tool.pytest.ini_options]
-addopts = "--jaxtyping-packages=diffrax,beartype.beartype(conf=beartype.BeartypeConf(strategy=beartype.BeartypeStrategy.On))"
+addopts = "--jaxtyping-packages=galrax,beartype.beartype(conf=beartype.BeartypeConf(strategy=beartype.BeartypeStrategy.On))"
 markers = ["slow"]
 
 [tool.ruff]
@@ -91,4 +74,4 @@ lines-after-imports = 2
 order-by-type = false
 
 [tool.uv]
-default-groups = ["dev", "docs", "tests"]
+default-groups = ["dev", "tests"]

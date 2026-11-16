@@ -2,10 +2,10 @@ import itertools
 
 import numpy as np
 import pytest
-from diffrax._padic_flow.arithmetic import valuation
-from diffrax._padic_flow.interpolation import _parse
-from diffrax._padic_flow.polynomial import evaluate_exact
-from diffrax.padic_flow import MinimalAction, PAdicFlow, PowerSeries, time_one_field
+from galrax.padic import MinimalAction, PAdicFlow, PowerSeries, time_one_field
+from galrax.padic.arithmetic import valuation
+from galrax.padic.interpolation import _parse
+from galrax.padic.polynomial import evaluate_exact
 
 
 def _apply(g, p, K, x):

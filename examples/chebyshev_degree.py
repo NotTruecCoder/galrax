@@ -9,7 +9,7 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from diffrax import padic_flow as pf  # noqa: E402
+from galrax import padic as pf  # noqa: E402
 
 
 def chebyshev_degree(x: int, y: int, p: int, k: int) -> int | None:

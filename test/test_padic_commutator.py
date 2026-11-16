@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
-from diffrax._padic_flow.polynomial import evaluate_exact
-from diffrax.padic_flow import commutator, lie_bracket, time_one_field
+from galrax.padic import commutator, lie_bracket, time_one_field
+from galrax.padic.polynomial import evaluate_exact
 
 
 p, digits = 5, 6

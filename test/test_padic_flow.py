@@ -7,14 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import scipy.linalg
-from diffrax._padic_flow.arithmetic import (
-    simplex,
-    simplex_horner,
-    simplex_size,
-    valuation,
-)
-from diffrax._padic_flow.normal_form import _monomials, homological_matrix, smith
-from diffrax.padic_flow import (
+from galrax.padic import (
     advection_diffusion,
     Equilibrium,
     KoopmanOperator,
@@ -27,7 +20,14 @@ from diffrax.padic_flow import (
     Residues,
     TimeDependentFlow,
 )
-from diffrax.ultrametric import UltrametricOperator
+from galrax.padic.arithmetic import (
+    simplex,
+    simplex_horner,
+    simplex_size,
+    valuation,
+)
+from galrax.padic.normal_form import _monomials, homological_matrix, smith
+from galrax.ultrametric import UltrametricOperator
 
 
 def _random(modulus, *shape, seed=0):
@@ -95,15 +95,17 @@ def test_barrett_reduction_is_exact(p, k):
 def test_residue_operations():
     res = Residues(3, 10)
     m = res.modulus
-    u = np.array([1, 2, 4, 5, m - 1, 12345 * 3 + 1])
+    u = np.array([1, 2, 4, 5, m - 1, 12345 * 3 + 1], dtype=np.int64)
     assert np.array_equal(np.asarray(res.mul(u, res.unit_inverse(u))), np.ones(6))
-    x = np.array([0, 1, 3, 18, 81 * 2, m - 3])
+    x = np.array([0, 1, 3, 18, 81 * 2, m - 3], dtype=np.int64)
     assert np.array_equal(np.asarray(res.valuation(x)), [10, 0, 1, 2, 4, 1])
-    a, b = np.array([18 * 7]), np.array([9 * 5])
-    q = int(res.divide(a, b, np.array([2]))[0])
+    a, b = np.array([18 * 7], dtype=np.int64), np.array([9 * 5], dtype=np.int64)
+    q = int(res.divide(a, b, np.array([2], dtype=np.int64))[0])
     assert (q * 5 - 14) % 3**8 == 0
-    assert np.array_equal(np.asarray(res.asarray(np.array([-1]))), [m - 1])
-    assert int(res.power(np.array(2), 10)) == 1024
+    assert np.array_equal(
+        np.asarray(res.asarray(np.array([-1], dtype=np.int64))), [m - 1]
+    )
+    assert int(res.power(np.array(2, dtype=np.int64), 10)) == 1024
 
 
 def test_residue_validation():
@@ -505,7 +507,7 @@ def test_advection_diffusion():
     flow = _flow(3, 8, (3, -3, 0, 6))
     koopman = KoopmanOperator(flow, 3)
     operator = UltrametricOperator.vladimirov(
-        __import__("diffrax").ultrametric.PAdicIntegers(3, 3), 0.8
+        __import__("galrax").ultrametric.PAdicIntegers(3, 3), 0.8
     )
     n = koopman.size
     shift = np.zeros((n, n))

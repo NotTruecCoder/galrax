@@ -1,13 +1,11 @@
 <h1 align='center'>Galrax</h1>
 <h2 align='center'>Differential equations on finite groups and over the p-adic numbers, in JAX.</h2>
 
-Galrax is a fork of [Diffrax](https://github.com/patrick-kidger/diffrax) that adds three things Diffrax was never meant to do:
+Galrax is a JAX library with three parts. It started as a fork of [Diffrax](https://github.com/patrick-kidger/diffrax) and now uses Diffrax as an ordinary dependency, for the solvers of `galrax.groups`.
 
-- **`diffrax.group_algebra`**: differential equations whose unknown is a function on a finite group, such as heat equations on Cayley graphs or reaction–diffusion on a group.
-- **`diffrax.ultrametric`**: diffusion on the $p$-adic integers $\mathbb{Z}_p$, solved with no discretisation error.
-- **`diffrax.padic_flow`**: differential equations whose *state* is $p$-adic, $dx/dt = f(x)$ with $x \in \mathbb{Z}_p^d$. These can be solved exactly, for every starting point and every time at once, and that is the main subject of this repository.
-
-All of Diffrax is included unchanged.
+- **`galrax.groups`**: differential equations whose unknown is a function on a finite group, such as heat equations on Cayley graphs or reaction–diffusion on a group.
+- **`galrax.ultrametric`**: diffusion on the $p$-adic integers $\mathbb{Z}_p$, solved with no discretisation error.
+- **`galrax.padic`**: differential equations whose *state* is $p$-adic, $dx/dt = f(x)$ with $x \in \mathbb{Z}_p^d$. These can be solved exactly, for every starting point and every time at once, and that is the main subject of this repository.
 
 ## Why p-adic flows can be solved exactly
 
@@ -17,7 +15,7 @@ $$\varphi_t(x) = \sum_{n \ge 0} \frac{t^n}{n!} D^n x, \qquad D = f \cdot \nabla,
 
 converges for every $x \in \mathbb{Z}_p^d$ and every $p$-adic time $t \in \mathbb{Z}_p$, and modulo $p^K$ it is a polynomial in $(t, x)$ with integer coefficients. So "the flow to $K$ digits" is a finite object that can be computed exactly, with no rounding at all. Time has to be $p$-adic, by the way: a continuous path from $\mathbb{R}$ into $\mathbb{Z}_p$ is constant.
 
-The hard part is speed: the polynomial has degree about $K$. Most of `diffrax.padic_flow` is about making it small, and about using the exactness to answer questions that are usually numerical.
+The hard part is speed: the polynomial has degree about $K$. Most of `galrax.padic` is about making it small, and about using the exactness to answer questions that are usually numerical.
 
 What it can do:
 
@@ -37,14 +35,14 @@ The methods are described in the preprint *Exact flows and normal forms of diffe
 pip install git+https://github.com/NotTruecCoder/galrax.git
 ```
 
-You need Python 3.11+ and JAX. The package installs as `diffrax`, so do not install it next to the upstream `diffrax`. The $p$-adic code needs 64-bit integers: call `jax.config.update("jax_enable_x64", True)` first.
+You need Python 3.11+ and JAX; `diffrax` (0.7.x) is installed as a dependency. The $p$-adic code needs 64-bit integers: call `jax.config.update("jax_enable_x64", True)` first.
 
 ## Exact p-adic flows
 
 ```python
 import jax
 import numpy as np
-import diffrax.padic_flow as pf
+import galrax.padic as pf
 
 jax.config.update("jax_enable_x64", True)
 
@@ -226,8 +224,8 @@ The Vladimirov operator, the $p$-adic analogue of the fractional Laplacian, is t
 ```python
 import jax
 import jax.numpy as jnp
-import diffrax.group_algebra as ga
-import diffrax.ultrametric as um
+import galrax.groups as ga
+import galrax.ultrametric as um
 
 jax.config.update("jax_enable_x64", True)
 
@@ -257,7 +255,7 @@ Since the $p$-adic flows are isometries that preserve the Haar measure, their Ko
 
 ## Differential equations on finite groups
 
-`diffrax.group_algebra` solves
+`galrax.groups` solves
 
 $$\frac{dp}{dt} = \lambda * p + p * \mu + N(t, p), \qquad p : G \to \mathbb{C},$$
 
@@ -268,7 +266,7 @@ import diffrax
 import jax
 import jax.numpy as jnp
 import numpy as np
-import diffrax.group_algebra as ga
+import galrax.groups as ga
 
 jax.config.update("jax_enable_x64", True)
 
@@ -314,7 +312,7 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 
 ## API
 
-`diffrax.padic_flow`:
+`galrax.padic`:
 
 | Name | What it is |
 |---|---|
@@ -340,7 +338,7 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 | `Residues`, `Limbs` | Arithmetic in $\mathbb{Z}/p^K$ on `int64` arrays, with one word, two words or any number of limbs. |
 | `plot_trajectory`, `plot_phase_portrait`, `plot_advection_diffusion` | Pictures (needs matplotlib). |
 
-`diffrax.ultrametric`:
+`galrax.ultrametric`:
 
 | Name | What it is |
 |---|---|
@@ -349,7 +347,7 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 | `KozyrevTransform` | The Kozyrev wavelet expansion, usable as the `transform` of `solve_group_ode`. |
 | `monna`, `fractal_embedding`, `plot_kozyrev_wavelets` | $\mathbb{Z}_p$ on the line and in the plane. |
 
-`diffrax.group_algebra`:
+`galrax.groups`:
 
 | Name | What it is |
 |---|---|
@@ -388,19 +386,19 @@ pytest test/test_group_algebra.py test/test_ultrametric.py test/test_padic_flow.
 python benchmarks/padic_flow.py   # GPU throughput and set-up times
 ```
 
-The full Diffrax test suite also runs with `pytest`. `test_group_algebra.py` needs a few GB of memory.
+`pytest test` runs everything; `test_group_algebra.py` needs a few GB of memory.
 
 | Path | Contents |
 |---|---|
-| `diffrax/_padic_flow/` | `flow.py` (table-driven flows, flow-box coordinates), `arithmetic.py` (residues, limbs, Horner), `normal_form.py` (Smith forms, certificates), `formal.py` (formal groups, elliptic curves, height bounds), `interpolation.py` (time-one maps, minimal actions), `return_set.py` (orbits and return sets), `equilibria.py`, `events.py`, `koopman.py`, `maps.py`, `series.py`, `plot.py`. |
-| `diffrax/_ultrametric/` | $\mathbb{Z}_p$ to $n$ digits, ultrametric operators, Kozyrev wavelets. |
-| `diffrax/_group_algebra/` | Finite groups, representations, Fourier transforms, `GroupODE`, `Lawson`. |
-| `test/` | `test_padic_flow.py`, `test_padic_formal.py`, `test_padic_bounds.py`, `test_padic_interpolation.py`, `test_padic_tables.py`, `test_ultrametric.py`, `test_group_algebra.py`, and the Diffrax tests. |
-| `examples/padic_figures.py` | Draws the pictures. |
+| `galrax/padic/` | `flow.py` (table-driven flows, flow-box coordinates), `arithmetic.py` (residues, limbs, Horner), `normal_form.py` (Smith forms, certificates), `formal.py` (formal groups, elliptic curves, height bounds), `interpolation.py` (time-one maps, minimal actions), `return_set.py` (orbits and return sets), `equilibria.py`, `events.py`, `koopman.py`, `maps.py`, `series.py`, `plot.py`. |
+| `galrax/ultrametric/` | $\mathbb{Z}_p$ to $n$ digits, ultrametric operators, Kozyrev wavelets. |
+| `galrax/groups/` | Finite groups, representations, Fourier transforms, `GroupODE`, `Lawson`. |
+| `test/` | One file per module: `test_padic_*.py`, `test_ultrametric.py`, `test_group_algebra.py`, and the tests of the examples. |
+| `examples/` | `padic_figures.py` (the pictures), `chebyshev_degree.py`, `markoff_smith.py` and `lattice_scan.py` (minimality on Markoff-type surfaces), `padic_layer.py` (invertible layers), `monna_sequence.py`. |
 
 ## Citing
 
-If you use `diffrax.padic_flow`, please cite the preprint:
+If you use `galrax.padic`, please cite the preprint:
 
 ```bibtex
 @misc{terskii_padic_flows,
@@ -412,7 +410,7 @@ If you use `diffrax.padic_flow`, please cite the preprint:
 
 ## Credits and license
 
-Galrax is built on [Diffrax](https://github.com/patrick-kidger/diffrax) by Patrick Kidger and is distributed under the same [Apache 2.0 license](LICENSE). If you use the Diffrax part in academic work, please cite:
+Galrax is distributed under the [Apache 2.0 license](LICENSE). It began as a fork of [Diffrax](https://github.com/patrick-kidger/diffrax) by Patrick Kidger, also Apache 2.0; [NOTICE](NOTICE) says which code still builds on it. `galrax.groups` solves with Diffrax, so if you use that part in academic work, please cite:
 
 ```bibtex
 @phdthesis{kidger2021on,

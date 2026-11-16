@@ -5,15 +5,7 @@ from fractions import Fraction
 import jax
 import numpy as np
 import pytest
-from diffrax._padic_flow.arithmetic import valuation
-from diffrax._padic_flow.normal_form import (
-    _monomials,
-    _rank,
-    _residual_splitting,
-    homological_matrix,
-    smith,
-)
-from diffrax.padic_flow import (
+from galrax.padic import (
     EllipticCurve,
     height_bound,
     linear_degree,
@@ -22,6 +14,14 @@ from diffrax.padic_flow import (
     PAdicFlow,
     smith_exponent_bound,
     TimeDependentFlow,
+)
+from galrax.padic.arithmetic import valuation
+from galrax.padic.normal_form import (
+    _monomials,
+    _rank,
+    _residual_splitting,
+    homological_matrix,
+    smith,
 )
 
 

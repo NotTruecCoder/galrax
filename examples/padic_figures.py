@@ -13,7 +13,7 @@ jax.config.update("jax_enable_x64", True)
 
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-from diffrax import padic_flow as pf, ultrametric as um  # noqa: E402
+from galrax import padic as pf, ultrametric as um  # noqa: E402
 
 
 out = pathlib.Path(__file__).resolve().parents[1] / "imgs" / "padic"

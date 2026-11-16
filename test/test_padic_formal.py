@@ -6,10 +6,10 @@ from fractions import Fraction
 
 import numpy as np
 import pytest
-from diffrax._padic_flow.arithmetic import valuation
-from diffrax._padic_flow.formal import weierstrass_differential
-from diffrax._padic_flow.normal_form import _monomials, homological_matrix, smith
-from diffrax.padic_flow import EllipticCurve, FormalGroupFlow, logarithmic_exponents
+from galrax.padic import EllipticCurve, FormalGroupFlow, logarithmic_exponents
+from galrax.padic.arithmetic import valuation
+from galrax.padic.formal import weierstrass_differential
+from galrax.padic.normal_form import _monomials, homological_matrix, smith
 
 
 # 389a1: rank 2 with generators (0, 0) and (1, 0); 37a1: rank 1 with generator (0, 0).

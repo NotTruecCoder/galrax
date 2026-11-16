@@ -6,7 +6,7 @@ from fractions import Fraction
 
 import numpy as np
 import pytest
-from diffrax.padic_flow import (
+from galrax.padic import (
     chabauty_zeros,
     EllipticCurve,
     FormalGroup,

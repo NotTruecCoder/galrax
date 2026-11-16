@@ -20,7 +20,7 @@ import numpy as np
 
 jax.config.update("jax_enable_x64", True)
 
-import diffrax.padic_flow as pf  # noqa: E402
+import galrax.padic as pf  # noqa: E402
 
 
 FLOWS = [

@@ -1,0 +1,11 @@
+Galrax
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This repository began as a fork of Diffrax (https://github.com/patrick-kidger/diffrax),
+Copyright Patrick Kidger, licensed under the Apache License, Version 2.0. Diffrax is
+now an ordinary dependency and its source is no longer part of this repository.
+
+galrax/groups/solver.py (the Lawson integrating-factor solver and solve_group_ode)
+is built on Diffrax's solver, term and step-size controller classes and uses the
+private diffrax._term.WrapTerm. galrax/_types.py copies type aliases from
+diffrax/_custom_types.py.

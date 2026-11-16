@@ -12,7 +12,7 @@ import numpy as np
 
 jax.config.update("jax_enable_x64", True)
 
-from diffrax.padic_flow import matrix_power_index, PAdicMap  # noqa: E402
+from galrax.padic import matrix_power_index, PAdicMap  # noqa: E402
 
 
 def timed(label, fn, repeat=1):

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
-from diffrax._padic_flow.polynomial import evaluate_exact
-from diffrax.padic_flow import Orbit, PAdicEvent, PAdicMap, recurrence_times
+from galrax.padic import Orbit, PAdicEvent, PAdicMap, recurrence_times
+from galrax.padic.polynomial import evaluate_exact
 
 
 def _orbit(g, x, count, m):

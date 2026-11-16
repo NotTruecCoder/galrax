@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from diffrax.padic_flow import PAdicFlow, PowerSeries
+from galrax.padic import PAdicFlow, PowerSeries
 
 
 CASES = [

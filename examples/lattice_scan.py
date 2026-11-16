@@ -29,8 +29,8 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from diffrax import padic_flow as pf  # noqa: E402
-from diffrax._padic_flow.normal_form import (  # noqa: E402
+from galrax import padic as pf  # noqa: E402
+from galrax.padic.normal_form import (  # noqa: E402
     _matmul,
     _matpow,
     _multiply,

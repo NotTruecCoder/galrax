@@ -3,8 +3,8 @@ minimal and keeps the Haar measure, so u_n is equidistributed in [0, 1], and the
 term costs the same for n = 5 and n = 10^100.
 """
 
-from diffrax.padic_flow import PAdicMap
-from diffrax.ultrametric import monna
+from galrax.padic import PAdicMap
+from galrax.ultrametric import monna
 
 
 T, digits = PAdicMap(2, [1, 3, 2]), 32

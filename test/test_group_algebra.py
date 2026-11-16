@@ -1,12 +1,12 @@
 import diffrax
-import diffrax.group_algebra as ga
+import galrax.groups as ga
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 import scipy.integrate
 import scipy.linalg
-from diffrax.group_algebra import (
+from galrax.groups import (
     convolution,
     exact_linear_solution,
     FastFourierTransform,

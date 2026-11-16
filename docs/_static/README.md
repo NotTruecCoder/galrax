@@ -1,1 +1,0 @@
-The favicon is adapted from `math-integral-box` from https://materialdesignicons.com, found by way of https://pictogrammers.com. Specifically it has been adapted by filling in the integral with black. (Originally it has 100% alpha.)

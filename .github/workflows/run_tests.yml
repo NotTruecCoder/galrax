@@ -31,7 +31,3 @@ jobs:
       - name: Test with pytest
         run: |
           uv run python -m test
-
-      - name: Check that documentation can be built.
-        run: |
-          uv run mkdocs build
