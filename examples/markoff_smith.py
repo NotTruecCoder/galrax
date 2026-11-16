@@ -8,6 +8,15 @@ X_{h^-1 g h}(q) = Dh(q)^-1 X_g(h q).  The Z_p-span is a lattice in T_q with
 Smith exponents k1 <= k2 (k3 must be >= W: tangency check).
 
 Usage: python markoff_smith.py p depth lifts [D1,D2,...]
+
+Lifts whose global exponents are not (1, 1) are printed with the finite orbit they
+are congruent to modulo p^2. The 7830 lifts of the paper, of which 28 have (2, 2):
+18 near (0, 0, +-sqrt D), 7 near the Cayley cubic, 2 near the orbit of (1, 1, 1) on
+X_2 and 1 near that of (1, sqrt 2, 0) on X_3 (about 20 minutes in all):
+
+    python markoff_smith.py 5 8 3
+    python markoff_smith.py 7 7 2 $(seq -s, 0 41)
+    python markoff_smith.py 11 6 1 0,1,2,3,4,5,6,8,15,30,40,60,121,242,7,9
 """
 
 import random
@@ -215,10 +224,53 @@ def legendre(a, p):
     return 1 if pow(a, (p - 1) // 2, p) == 1 else -1
 
 
+def chebyshev(n, t, P):
+    """a^n + a^-n mod P for t = a + 1/a, by doubling."""
+    low, high = 2, t % P
+    for bit in bin(n)[2:]:
+        middle = (low * high - t) % P
+        if bit == "0":
+            low, high = (low * low - 2) % P, middle
+        else:
+            low, high = middle, (high * high - 2) % P
+    return low
+
+
+def orbit(start, P):
+    """The orbit of a point under the three involutions, modulo P."""
+    seen, stack = set(), [tuple(v % P for v in start)]
+    while stack:
+        r = stack.pop()
+        if r not in seen:
+            seen.add(r)
+            stack += [tuple(involution(r, a, P)) for a in range(3)]
+    return seen
+
+
+def finite_orbit(q, D, p):
+    """The finite orbit that q is congruent to modulo p^2, or None.
+
+    a + 1/a with a a root of unity of order prime to p is the t with
+    t = a^(p^2) + a^-(p^2) mod p^2 (a Teichmueller lift).
+    """
+    P = p * p
+    q, D = tuple(v % P for v in q), D % P
+    if sorted(v == 0 for v in q) == [False, True, True]:
+        return "(0,0,+-sqrt D)"
+    if D == 4 and all(chebyshev(P, v, P) == v for v in q):
+        return "Cayley cubic X_4"
+    if D == 2 and q in orbit((1, 1, 1), P):
+        return "orbit of (1,1,1) on X_2"
+    roots = [s for s in range(P) if s * s % P == 2]
+    if D == 3 and any(q in orbit((1, s, 0), P) for s in roots):
+        return "orbit of (1,sqrt 2,0) on X_3"
+    return None
+
+
 def run(p, Ds, depth, lifts, seed=0):
     rng = random.Random(seed)
     print(f"\n=== p = {p}, words of length <= {depth}, {lifts} lift(s) per point ===")
-    total = Counter()
+    total, kinds = Counter(), Counter()
     for D in Ds:
         Dl = (D + p**2 * rng.randrange(p ** (W - 2))) % p**W
         tag = "D=0 mod p^2" if Dl % p**2 == 0 else f"((D-4)/p)={legendre(Dl - 4, p):+d}"
@@ -230,6 +282,11 @@ def run(p, Ds, depth, lifts, seed=0):
                 assert res[depth][2] >= W - 2, ("not tangent", res)
                 loc[tuple(res[0][:2])] += 1
                 glob[tuple(res[depth][:2])] += 1
+                if tuple(res[depth][:2]) != (1, 1):
+                    kind = finite_orbit(q, Dl, p)
+                    kinds[kind] += 1
+                    near = tuple(v % p**2 for v in q)
+                    print(f"  D={D} q={near} mod p^2 {tuple(res[depth][:2])}: {kind}")
         an_loc = sum(c for (a, b), c in loc.items() if a < b)
         an_glob = sum(c for (a, b), c in glob.items() if a < b)
         n = sum(loc.values())
@@ -243,6 +300,7 @@ def run(p, Ds, depth, lifts, seed=0):
         )
         sys.stdout.flush()
     print("TOTAL", dict(total))
+    print("EXCEPTIONAL", dict(kinds))
 
 
 if __name__ == "__main__":

@@ -46,7 +46,10 @@ def _classify(polys, center, level, depth, p, precision):
     return "inside" if inside else None
 
 
-def _merge(balls: list[Ball], p: int, d: int) -> list[Ball]:
+def _merge(balls: list[Ball], p: int, d: int, period: int = 1) -> list[Ball]:
+    """Replace every `p^d` children of a ball by the ball; with `period = M` (and
+    `d = 1`) a ball stands for the class `center mod M p^level`.
+    """
     balls = set(balls)
     changed = True
     while changed:
@@ -55,7 +58,7 @@ def _merge(balls: list[Ball], p: int, d: int) -> list[Ball]:
         for ball in balls:
             if ball.level == 0:
                 continue
-            modulus = p ** (ball.level - 1)
+            modulus = period * p ** (ball.level - 1)
             parent = Ball(tuple(c % modulus for c in ball.center), ball.level - 1)
             parents.setdefault(parent, []).append(ball)
         for parent, children in parents.items():

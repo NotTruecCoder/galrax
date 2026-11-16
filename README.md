@@ -89,7 +89,7 @@ print(doubling.minimal_decomposition(4))  # the spheres |x| = 5^-k are minimal; 
 print(pf.PAdicMap(2, lambda x: x + (x * x | 5)).is_minimal(16))  # Klimov-Shamir: True
 
 qcg = pf.PAdicMap(2, [1, 3, 2])  # x -> 2x^2 + 3x + 1 mod 2^64
-y = qcg.iterate(0, 10**30, 64)  # jump ahead, same cost for every n
+y = qcg.iterate(0, 10**30, 64)  # same cost for every n after a set-up of up to p^3 * level steps per start
 print(qcg.index(0, y, 64) == 10**30 % 2**64)  # True: the index of a value
 mba = pf.PAdicMap(2, [3, 5, 2])  # an MBA permutation polynomial
 print(mba.iterate(mba(12345, 32), -1, 32))  # 12345: n = -1 is the inverse, 1/3 a cube root

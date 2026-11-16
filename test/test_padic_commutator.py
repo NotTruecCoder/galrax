@@ -1,6 +1,7 @@
 import numpy as np
+import pytest
 from diffrax._padic_flow.polynomial import evaluate_exact
-from diffrax.padic_flow import commutator, lie_bracket
+from diffrax.padic_flow import commutator, lie_bracket, time_one_field
 
 
 p, digits = 5, 6
@@ -46,6 +47,26 @@ def test_commutator_is_minus_the_bracket():
     X, Y = _minus_identity(g, m), _minus_identity(h, m)
     c = _minus_identity(commutator(p, 3, g, h), p**3)
     assert _add(c, lie_bracket(p, 3, X, Y), p**3) == [{}, {}]
+
+
+@pytest.mark.parametrize("q,c", [(2, 2), (5, 1)])
+def test_commutator_is_minus_the_bracket_of_the_fields(q, c):
+    digits = 3 * c - (q == 2)
+    one = q**c
+    f = [{(1, 0): 1, (0, 0): one, (0, 2): one}, {(0, 1): 1, (1, 0): one}]
+    k = [{(1, 0): 1, (0, 1): one, (1, 1): 2 * one}, {(0, 1): 1, (2, 0): one}]
+    X, Y = time_one_field(q, digits, f), time_one_field(q, digits, k)
+    modulus = q**digits
+    shift = _minus_identity(commutator(q, digits, f, k), modulus)
+    assert _add(shift, lie_bracket(q, digits, X, Y), modulus) == [{}, {}]
+    if q == 2:  # the 1/2 in the third-order terms costs exactly one digit here
+        X, Y = time_one_field(q, digits + 1, f), time_one_field(q, digits + 1, k)
+        shift = _minus_identity(commutator(q, digits + 1, f, k), 2 * modulus)
+        assert _add(shift, lie_bracket(q, digits + 1, X, Y), 2 * modulus) != [{}, {}]
+
+
+def test_time_one_field_for_a_prime_above_36():
+    assert time_one_field(101, 2, [0, 102]) == [{(1,): 101}]  # log(1 + p) = p mod p^2
 
 
 def test_bracket_is_a_lie_bracket():

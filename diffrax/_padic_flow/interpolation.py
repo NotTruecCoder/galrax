@@ -29,7 +29,7 @@ from .polynomial import (
     reduce,
 )
 from .roots import Ball
-from .series import PowerSeries
+from .series import _digits_of_log, PowerSeries
 
 
 def _parse(g, p: int, digits: int) -> list[dict]:
@@ -91,7 +91,7 @@ def time_one_field(p: int, digits: int, g) -> list[dict]:
     if c >= digits:
         return [{} for _ in range(d)]
     terms = 1
-    while terms * c - (len(np.base_repr(terms, p)) - 1) < digits:
+    while terms * c - _digits_of_log(terms, p) < digits:
         terms += 1
     guard = max(valuation(j, p, digits) for j in range(1, terms))
     work = digits + guard
@@ -212,7 +212,8 @@ def _subtract(a: dict, b: dict, m: int) -> dict:
 def commutator(p: int, digits: int, g, h) -> list[dict]:
     """`g o h o g^{-1} o h^{-1}` modulo `p^digits`, for maps `g = id + p^c ...`,
     `h = id + p^c ...` (`c >= 1`) given like vector fields. It is
-    `id - [X, Y]` modulo `p^{3c}` for the fields `X`, `Y` of `g` and `h`.
+    `id - [X, Y]` for the fields `X`, `Y` of `g` and `h`, modulo `p^{3c}` for odd
+    `p` and only modulo `p^{3c - 1}` for `p = 2`: the third-order terms carry `1/2`.
 
     `g^{-1}` is the limit of `y <- id - (g - id) o y`, which gains `c` digits a
     step. A monomial of degree `e` in any word in `g`, `h` and their inverses has

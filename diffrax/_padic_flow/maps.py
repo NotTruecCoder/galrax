@@ -317,6 +317,8 @@ class PAdicMap:
     def _jump(self, x: int, level: int):
         key = (int(x) % self.p**level, int(level))
         if key not in self._jumps:
+            if len(self._jumps) >= 64:
+                del self._jumps[next(iter(self._jumps))]
             self._jumps[key] = self._jump_table(*key)
         return self._jumps[key]
 
@@ -377,21 +379,30 @@ class PAdicMap:
 
     def iterate(self, x: int, n, level: int) -> int:
         """`T^n(x) mod p^level` for a polynomial `T`, at a cost independent of `n`
-        once `(x, level)` is set up. `n` is a non-negative integer, or any `p`-adic
-        integer (negative, or a `Fraction` with denominator prime to `p`) when the
-        orbit of `x` carries a `Z_p`-action, as for every permutation polynomial
-        modulo `2^w`: `n = -1` is the inverse, `n = 1/m` an `m`-th root.
+        once `(x, level)` is set up.
+
+        `n` is a non-negative integer; a negative one when `x` is periodic modulo
+        `p` (modulo `4` for `p = 2`), giving the preimage on the orbit closure, the
+        inverse for a bijection; a `Fraction` with denominator prime to `p` when the
+        period modulo `p` is also a power of `p`, as for every permutation
+        polynomial modulo `2^w`: `n = 1/m` is an `m`-th root.
+
+        The set-up iterates `T` about `L ord(a) p^e J` times, with `L <= p^e` the
+        period modulo `p^e`, `ord(a) < p` and `J ~ level`: fine for small `p`, slow
+        for large ones (40 s for `p = 1009`, three digits). The last 64 set-ups are
+        kept.
         """
         tail, step, tables = self._jump(x, level)
         n = Fraction(n)
         if n.denominator == 1 and 0 <= n < len(tail):
             return tail[int(n)]
-        if n.denominator == 1 and n >= 0:
+        if n.denominator == 1 and (n >= 0 or not tail):
             q, r = divmod(int(n) - len(tail), step)
-        elif tail or not _is_power(step, self.p):
+        elif tail:
+            raise ValueError("Negative iterates need an orbit periodic modulo p.")
+        elif not _is_power(step, self.p):
             raise ValueError(
-                "Negative and p-adic iterates need an orbit that is periodic modulo p "
-                "with a period that is a power of p."
+                "p-adic iterates need a period modulo p that is a power of p."
             )
         elif n.denominator % self.p == 0:
             raise ValueError("`n` must be a p-adic integer.")
@@ -452,9 +463,7 @@ class PAdicMap:
             s += 1
         period = step // self.p**s
         balls = [Ball((r + step * b.center[0],), b.level + s) for r, b in hits]
-        if period == 1:
-            balls = _merge(balls, self.p, 1)
-        balls = sorted(balls, key=lambda b: b.center)
+        balls = sorted(_merge(balls, self.p, 1, period), key=lambda b: b.center)
         return EventSet(balls, self.p, depth, None, period)
 
 

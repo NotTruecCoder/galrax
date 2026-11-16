@@ -2,7 +2,7 @@ from fractions import Fraction
 
 import numpy as np
 import pytest
-from diffrax.padic_flow import PAdicEvent, PAdicFlow, PAdicMap
+from diffrax.padic_flow import Ball, PAdicEvent, PAdicFlow, PAdicMap
 
 
 def _orbit(mapping, x, count, level):
@@ -69,6 +69,15 @@ def test_inverse_and_roots_of_permutation_polynomials():
         mba.iterate(1, Fraction(1, 2), level)
 
 
+def test_negative_iterates_without_a_power_of_p_period():
+    doubling = PAdicMap(5, [0, 2])  # period 4 modulo 5
+    for n in range(1, 6):
+        assert doubling.iterate(1, -n, 4) == pow(2, -n, 5**4)
+        assert doubling.iterate(doubling.iterate(7, -n, 4), n, 4) == 7
+    with pytest.raises(ValueError, match="power of p"):
+        doubling.iterate(1, Fraction(1, 3), 4)
+
+
 def test_inverse_and_roots_agree_with_the_flow():
     level = 10
     near_identity = [4, 5, 4]  # 4x^2 + 5x + 4 = id mod 4
@@ -111,7 +120,7 @@ def test_unreachable_over_the_integers():
     # (-3)^10 = 1 mod 121, so it is never 100 modulo 121, hence never 100.
     loop = PAdicMap(11, [1, -3])
     mod_p = loop.hitting_times(1, PAdicEvent([-100, 1], 1), 3)
-    assert 0 in mod_p and mod_p.period == 10
+    assert mod_p.balls == [Ball((0,), 0)] and mod_p.period == 10  # n = 0 mod 10
     assert not loop.hitting_times(1, PAdicEvent([-100, 1], 2), 3)
     x = 1
     for n in range(500):
