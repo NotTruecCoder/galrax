@@ -3,11 +3,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 
 from .arithmetic import factorial_valuation, is_prime
 from .events import EventSet, PAdicEvent
-from .polynomial import parse_polynomial, reduce
+from .polynomial import evaluate_exact, parse_field, parse_polynomial, reduce
+from .return_set import linear, Orbit
 from .roots import _merge, Ball, vanishing_set
 
 
@@ -79,7 +82,10 @@ class PAdicMap:
     - `p`: a prime.
     - `map`: the polynomial `[c_0, c_1, ...]` (coefficients `p`-adic integers, e.g.
         `Fraction`s with denominators prime to `p`), or a function taking a
-        non-negative Python integer and returning an integer.
+        non-negative Python integer and returning an integer. A polynomial map of
+        `Z_p^d` is given like a vector field, one `{exponents: coefficient}` per
+        component: points are then tuples, and `iterate`, `index`, `period` and
+        `hitting_times` go through an `Orbit`; the cycle tree needs `d = 1`.
     """
 
     def __init__(self, p: int, map: list | Callable[[int], int]):
@@ -87,7 +93,19 @@ class PAdicMap:
         if not is_prime(p):
             raise ValueError("`p` must be a prime.")
         self.p = p
-        if callable(map):
+        self.dimension, self.components = 1, None
+        if not callable(map) and any(isinstance(c, dict) for c in map):
+            components = parse_field(map, p)
+            if len(components) == 1:
+                (poly,) = components
+                top = max((e[0] for e in poly), default=0)
+                map = [poly.get((k,), 0) for k in range(top + 1)]
+            else:
+                self.dimension, self.components = len(components), components
+        self._jumps = {}
+        if self.components is not None:
+            self.coefficients = self._function = None
+        elif callable(map):
             self.coefficients = None
             self._function = map
         else:
@@ -97,15 +115,20 @@ class PAdicMap:
                     raise ValueError("Coefficients must be p-adic integers.")
             self.coefficients = coefficients
             self._function = None
-        self._jumps = {}
 
     @property
     def is_polynomial(self) -> bool:
         return self.coefficients is not None
 
-    def __call__(self, x: int, level: int) -> int:
+    def __call__(self, x, level: int):
         """`T(x) mod p^level`."""
         modulus = self.p**level
+        if self.components is not None:
+            point = [int(v) for v in x]
+            return tuple(
+                evaluate_exact(poly, point, modulus)
+                for poly in reduce(self.components, modulus)
+            )
         if self._function is not None:
             return int(self._function(int(x) % modulus)) % modulus
         total = 0
@@ -221,6 +244,8 @@ class PAdicMap:
         A cycle marked `final = "minimal"` is not expanded: its lifts at every level
         are single cycles covering its balls.
         """
+        if self.components is not None:
+            raise ValueError("Cycle trees need a map of Z_p (d = 1).")
         max_level = int(max_level)
         if max_level < 1:
             raise ValueError("`max_level` must be at least 1.")
@@ -314,13 +339,46 @@ class PAdicMap:
     # Jump-ahead
     #
 
-    def _jump(self, x: int, level: int):
-        key = (int(x) % self.p**level, int(level))
+    def _cached(self, key, build):
         if key not in self._jumps:
             if len(self._jumps) >= 64:
                 del self._jumps[next(iter(self._jumps))]
-            self._jumps[key] = self._jump_table(*key)
+            self._jumps[key] = build()
         return self._jumps[key]
+
+    def _jump(self, x: int, level: int):
+        key = (int(x) % self.p**level, int(level))
+        return self._cached(key, lambda: self._jump_table(*key))
+
+    def orbit(self, x, level: int) -> Orbit:
+        """The `Orbit` of a point modulo `p^level`, for a polynomial map (cached)."""
+        if not (self.components or self.is_polynomial):
+            raise ValueError("Orbits need a polynomial map.")
+        x = tuple(int(v) % self.p**level for v in np.atleast_1d(x))
+        maps = self.components or self.coefficients
+        return self._cached((x, int(level)), lambda: Orbit(self.p, level, maps, x))
+
+    def _iterate_many(self, x: int, n: np.ndarray, level: int) -> np.ndarray:
+        """`iterate` over an integer array: Horner's rule on the tables, in `int64`
+        JAX arrays while products of residues fit, else in Python integers.
+        """
+        tail, step, tables = self._jump(x, level)
+        m = self.p**level
+        if tail and (n < 0).any():
+            raise ValueError("Negative iterates need an orbit periodic modulo p.")
+        q, r = (n - len(tail)) // step % m, (n - len(tail)) % step
+        fast = m < 2**31 and jax.config.jax_enable_x64
+        xp, dtype = (jnp, np.int64) if fast else (np, object)
+        table = xp.asarray(np.array(tables, dtype=dtype))
+        q, r = xp.asarray(q.astype(dtype)), xp.asarray(r.astype(np.int64))
+        total = xp.zeros_like(q)
+        for j in reversed(range(table.shape[1])):
+            total = (total * q + table[r, j]) % m
+        out = np.asarray(total).astype(object)
+        if tail:
+            early = (n < len(tail)).astype(bool)
+            out[early] = np.array(tail, dtype=object)[n[early].astype(np.int64)]
+        return out
 
     def _jump_table(self, x: int, level: int):
         """The tail `x_0, ..., x_{s-1}` before the orbit turns periodic modulo `p^e`
@@ -377,7 +435,7 @@ class PAdicMap:
             tables.append(poly)
         return tail, step, tables
 
-    def iterate(self, x: int, n, level: int) -> int:
+    def iterate(self, x, n, level: int):
         """`T^n(x) mod p^level` for a polynomial `T`, at a cost independent of `n`
         once `(x, level)` is set up.
 
@@ -391,7 +449,14 @@ class PAdicMap:
         period modulo `p^e`, `ord(a) < p` and `J ~ level`: fine for small `p`, slow
         for large ones (40 s for `p = 1009`, three digits). The last 64 set-ups are
         kept.
+
+        An array `n` of integers is done at once, in `int64` JAX arrays up to
+        `p^level < 2^31`. For a map of `Z_p^d`, `n` is any array of integers.
         """
+        if self.components is not None:
+            return self.orbit(x, level)(n)
+        if np.ndim(n):
+            return self._iterate_many(x, np.asarray(n, dtype=object), level)
         tail, step, tables = self._jump(x, level)
         n = Fraction(n)
         if n.denominator == 1 and 0 <= n < len(tail):
@@ -437,15 +502,17 @@ class PAdicMap:
             hits += [(r, b) for b in vanishing_set(polys, 1, self.p, level, depth)]
         return tail, step, hits
 
-    def index(self, x: int, y: int, level: int) -> int | None:
+    def index(self, x, y, level: int) -> int | None:
         """The smallest `n >= 0` with `T^n(x) = y mod p^level`, or `None`."""
+        if self.components is not None:
+            return self.orbit(x, level).index(y)
         tail, step, hits = self._hits(x, [[-int(y), 1]], level, level)
         y = int(y) % self.p**level
         if y in tail:
             return tail.index(y)
         return min((len(tail) + r + step * b.center[0] for r, b in hits), default=None)
 
-    def hitting_times(self, x: int, event: PAdicEvent, level: int) -> EventSet:
+    def hitting_times(self, x, event: PAdicEvent, level: int) -> EventSet:
         """All `n >= 0` at which the loop `x <- T(x)` on `Z/p^level`, started at `x`,
         is in `Bad = {v_p(g) >= depth for every condition g of the event}`.
 
@@ -454,6 +521,8 @@ class PAdicMap:
         empty set for integer `T`, `x` and `g` proves that the loop over `Z` never
         reaches `g = 0`. `x` must be periodic modulo `p` (modulo `4` for `p = 2`).
         """
+        if self.components is not None:
+            return self.orbit(x, level).times(event)
         depth = level if event.depth is None else event.depth
         tail, step, hits = self._hits(x, event.condition, level, depth)
         if tail:
@@ -465,6 +534,37 @@ class PAdicMap:
         balls = [Ball((r + step * b.center[0],), b.level + s) for r, b in hits]
         balls = sorted(_merge(balls, self.p, 1, period), key=lambda b: b.center)
         return EventSet(balls, self.p, depth, None, period)
+
+    def period(self, x, level: int) -> int:
+        """The least period of `x` modulo `p^level`, for `x` periodic modulo `p`
+        (modulo `4` for `p = 2`): `p^level` for a minimal map; for a Chebyshev
+        permutation polynomial and `p > 3`, `N_s l_s p^{level - v}` once
+        `level >= v` (Li, Lu, Tan, Chen, arXiv:2209.14658, Theorem 1).
+        """
+        y = [int(v) % self.p**level for v in np.atleast_1d(x)]
+        d = len(y)
+        conditions = [
+            {tuple(int(j == i) for j in range(d)): 1, (0,) * d: -v}
+            for i, v in enumerate(y)
+        ]
+        point = y if self.components is not None else y[0]
+        times = self.hitting_times(point, PAdicEvent(conditions), level)
+        # The times form P Z: classes k P modulo M p^level, all of one level.
+        return min(b.center[0] or times.period * self.p**b.level for b in times.balls)
+
+
+def matrix_power_index(p: int, precision: int, matrix, start, target, coordinate=0):
+    """The smallest `n >= 0` with `(M^n v)_coordinate = target mod p^K`, or `None`,
+    for `M` invertible modulo `p`.
+
+    Chebyshev, Lucas and Dickson sequences are all `(M^n v)_0` for a `2 x 2` `M`:
+    `T_n(x)` with `M = [[0, 1], [-1, 2x]]`, `v = (1, x)`; `V_n(P, Q)` with
+    `[[0, 1], [-Q, P]]`, `(2, P)`; `D_n(x, a)` with `[[0, 1], [-a, x]]`, `(2, x)`.
+    """
+    d = len(matrix)
+    unit = tuple(int(j == coordinate) for j in range(d))
+    event = PAdicEvent({unit: 1, (0,) * d: -int(target)})
+    return Orbit(p, precision, linear(matrix), start).times(event).first()
 
 
 def _is_power(n: int, p: int) -> bool:

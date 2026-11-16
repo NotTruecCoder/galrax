@@ -19,7 +19,12 @@ from .koopman import (
     advection_diffusion as advection_diffusion,
     KoopmanOperator as KoopmanOperator,
 )
-from .maps import Component as Component, Cycle as Cycle, PAdicMap as PAdicMap
+from .maps import (
+    Component as Component,
+    Cycle as Cycle,
+    matrix_power_index as matrix_power_index,
+    PAdicMap as PAdicMap,
+)
 from .normal_form import (
     NormalForm as NormalForm,
     smith_exponent_bound as smith_exponent_bound,
