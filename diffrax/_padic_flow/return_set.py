@@ -11,6 +11,10 @@ modulo `p^e` and the time-one map of a flow `phi` (`PAdicFlow.from_time_one`). T
 for every `q` in `Z_p`: the times of an event along the orbit are, for each
 `r = iL + j < N`, an `EventSet` of the flow, and the classes `n = s + r + N q` glue
 into a union of classes modulo `M p^k`, `M` the part of `N` prime to `p`.
+
+This covers orbits without attracting directions: `Dg^L` invertible modulo `p` on
+the cycle. A random polynomial map often has a singular `Dg^L` modulo `p`, and then
+the orbit falls into an attracting cycle, which this method does not treat.
 """
 
 import math
@@ -63,8 +67,8 @@ class Orbit:
     modulo `p^K`: `x_n` for any integer `n` at a cost independent of `n`, and the
     return set of an event.
 
-    `Dg^L` must be invertible modulo `p` on the cycle of `x` modulo `p^e`; otherwise
-    the orbit falls into an attracting cycle and a `ValueError` is raised.
+    For orbits without attracting directions: `Dg^L` must be invertible modulo `p`
+    on the cycle of `x` modulo `p^e`; otherwise a `ValueError` is raised.
 
     **Arguments:**
 

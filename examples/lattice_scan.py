@@ -12,8 +12,10 @@ Markoff surface up to z -> -z).
 
 When k1 = k2 = k, two of the maps h^-1 rot_i^{n_i p} h are written in the chart
 u -> (q + p u, solved for the last coordinate) of the disc of q, where they are the
-identity modulo p, and a MinimalAction is built from them: it acts minimally on the
-ball of radius p^-k around q, and its level must be k.
+identity modulo p, and a MinimalAction is built from them. Its level must be k: it
+acts minimally on the ball of radius p^-k in the chart, which is the ball of radius
+p^-(k+1) around q on the surface. Odd p only: for p = 2 the flows need rot^n = I
+modulo 4, and the order is taken modulo 2.
 
 Usage: python lattice_scan.py p depth lifts a,b,c d1,d2,... [sample]
 """
@@ -194,6 +196,8 @@ def chart_map(surface, q, p, word, i, digits=K):
     """`h^-1 rot_i^{n p} h` in the chart `u` of the disc of `q` (`n` the order of
     `rot_i` at `h q`), modulo `p^digits`: two polynomials in `u`.
     """
+    if p == 2:
+        raise ValueError("p = 2 needs rot^n = I mod 4; the scanner takes n mod p.")
     m, top = p ** (digits + 1), digits
     solved = next(j for j, g in enumerate(surface.gradient(q, p)) if g)
     free = [j for j in range(3) if j != solved]

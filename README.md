@@ -146,6 +146,37 @@ print(sorted(pf.logarithmic_exponents([P, Q], 6, p=5, curve=E).values()))
 # [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4]: the Smith exponents of the degree-6 operator
 ```
 
+### Orbits, return sets and Chabauty
+
+For a polynomial map $g$ of $\mathbb{Z}_p^d$ and an orbit without attracting directions ($Dg^L$ invertible modulo $p$ on its cycle modulo $p$), a power $g^N$ is the identity modulo $p$ near the cycle, hence the time-one map of a flow. So $x_n$ costs the same for every $n$, and the times $n$ at which $h(x_n)$ vanishes to some depth are a finite union of residue classes, with Strassmann's bound on the exact zeros. Linear recurrences are orbits of their companion matrix.
+
+```python
+# Berstel's sequence a_{n+3} = 2 a_{n+2} - 4 a_{n+1} + 4 a_n from 0, 0, 1.
+zeros = pf.recurrence_times(3, 6, [4, -4, 2], [0, 0, 1])
+print([n for n in range(100) if n in zeros], zeros.zero_bound)  # [0, 1, 4, 6, 13, 52] 6
+
+# The degree n of a Chebyshev polynomial from x and T_n(x) modulo 101^9.
+x, n = 123456789, 10**15 + 7
+chebyshev = pf.Orbit(101, 9, pf.linear([[0, 1], [-1, 2 * x]]), (1, x))
+y = chebyshev(n)[0]  # T_n(x), at a cost independent of n
+m = pf.matrix_power_index(101, 9, [[0, 1], [-1, 2 * x]], (1, x), y)
+print(chebyshev(m)[0] == y, m <= n)  # True True
+
+# G_m x G_m as a two-dimensional formal group: the logarithm is p^2 times the
+# coordinates of the chart of two commuting flows.
+group = pf.FormalGroup.product(5, 6, [lambda k: (-1) ** k] * 2)
+alpha, beta = 1 + 25 * 3, 1 + 125
+z = np.array([[alpha - 1, beta - 1], [alpha * beta - 1, 0]], dtype=object)
+print(group.logarithm(z))  # [[20700 31375] [52075 0]]: log(alpha beta) = log alpha + log beta
+
+# Chabauty in a residue disc of y^2 = x(x - 1)(x - 2)(x - 5)(x - 6), Jacobian of rank 1:
+# the differential that kills [(10, -120) - (3, 6)] vanishes at two points of the disc.
+f = [0, 60, -112, 65, -14, 1]
+ell = pf.tiny_integrals(f, 7, 8, (3, 6), (10, -120))
+zeros = pf.chabauty_zeros(f, 7, 8, (3, 6), (ell[1], -ell[0]))
+print(zeros.zero_bound)  # 2
+```
+
 ### Speed
 
 Throughput for $10^6$ random $(t, x)$ per call on a laptop GPU with 6 GB of memory (JAX 0.12, CUDA 12, WSL2), median of 20 calls after 5 warm-up calls. Every method agrees bit for bit. "Before" is the version without the space reduction.
@@ -296,8 +327,13 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 | `Equilibrium`, `Linearization` | Zeros of $f$ with Hensel certificates, and linearising coordinates in dimension one. |
 | `NormalForm` | The Poincaré–Dulac normal form in any dimension, with `radius`, `resonant_terms`, `certificate`, `flow_map`. |
 | `FormalGroupFlow` | The flow of a formal group (`multiplicative`, `weierstrass`): `logarithm`, `exponential`, `multiple`. |
+| `FormalGroup(p, precision, omega, dimension)` | A $d$-dimensional formal group from its invariant differentials: commuting `fields`, `chart`, `logarithm`, `exponential`, `product`. |
+| `tiny_integrals`, `chabauty_zeros`, `disc_differentials` | Tiny integrals of $x^k\,dx/y$ on $y^2 = f(x)$, and the zeros of a Chabauty function in a residue disc, with Strassmann's bound. |
 | `EllipticCurve`, `logarithmic_exponents` | Exact rational points on a Weierstrass curve, and the Smith exponents for eigenvalues $\log P_i$. |
-| `PAdicMap`, `Cycle`, `Component` | Discrete maps: cycle trees, minimal decompositions, minimality; `iterate` ($T^n$ for large, negative or $p$-adic $n$), `index`, `hitting_times` of a loop. |
+| `PAdicMap`, `Cycle`, `Component` | Discrete maps: cycle trees, minimal decompositions, minimality; `iterate` ($T^n$ for large, negative or $p$-adic $n$, or an array of $n$), `index`, `period`, `hitting_times` of a loop; polynomial maps of $\mathbb{Z}_p^d$ through `Orbit`. |
+| `Orbit(p, precision, g, x)` | The orbit of a point under a polynomial map of $\mathbb{Z}_p^d$, without attracting directions: $x_n$ for arrays of $n$, `times` of an event (classes modulo $M p^k$ and Strassmann's bound), `index`. |
+| `recurrence_times`, `companion`, `linear` | Zeros of linear recurrences through the companion matrix; linear maps. |
+| `matrix_power_index` | The first $n$ with $(M^n v)_i = y \bmod p^K$: degrees of Chebyshev, Lucas and Dickson sequences. |
 | `lie_bracket`, `commutator` | $[X, Y]$ of two fields, and $g h g^{-1} h^{-1}$ of two maps congruent to the identity. |
 | `KoopmanOperator`, `advection_diffusion` | The Koopman operator of a flow, and transport plus ultrametric diffusion. |
 | `PowerSeries` | Analytic field components: `exp`, `log1p`, `geometric`, sums and products. |
@@ -330,6 +366,8 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 - The space reduction needs $p^{rd}$ centres, so it gets coarser in high dimension; the tests go up to $d = 4$.
 - Beyond 62 bits, results come back as Python integers and the call cannot be traced by `jit` as a whole.
 - Events, equilibria, linearisation, maps and the Smith forms of the normal form run on the host, sequentially.
+- `Orbit`, `recurrence_times`, `matrix_power_index` and the jump-ahead of `PAdicMap` cover orbits without attracting directions: $Dg^L$ invertible modulo $p$ on the cycle. In a random sample of 40 polynomial maps this excluded 22.
+- `chabauty_zeros` works in finite residue discs of an odd-degree or even-degree model with good reduction at odd $p$; the disc at infinity needs a change of model.
 - Analytic fields need a lower bound on the valuations of their coefficients; a wrong bound is not detected.
 - Queries that have no answer raise instead of returning a guess: `rectify` for a point outside the flow box (an error at run time under `jit`), `Linearization.orbit_time` for a point off the orbit, `MinimalAction` when the displacements are not a basis.
 - The elliptic case of `height_bound` needs upper bounds for the Néron–Tate Gram matrix and for $h - \hat h$ from the user.
@@ -354,7 +392,7 @@ The full Diffrax test suite also runs with `pytest`. `test_group_algebra.py` nee
 
 | Path | Contents |
 |---|---|
-| `diffrax/_padic_flow/` | `flow.py` (table-driven flows, flow-box coordinates), `arithmetic.py` (residues, limbs, Horner), `normal_form.py` (Smith forms, certificates), `formal.py` (formal groups, elliptic curves, height bounds), `interpolation.py` (time-one maps, minimal actions), `equilibria.py`, `events.py`, `koopman.py`, `maps.py`, `series.py`, `plot.py`. |
+| `diffrax/_padic_flow/` | `flow.py` (table-driven flows, flow-box coordinates), `arithmetic.py` (residues, limbs, Horner), `normal_form.py` (Smith forms, certificates), `formal.py` (formal groups, elliptic curves, height bounds), `interpolation.py` (time-one maps, minimal actions), `return_set.py` (orbits and return sets), `equilibria.py`, `events.py`, `koopman.py`, `maps.py`, `series.py`, `plot.py`. |
 | `diffrax/_ultrametric/` | $\mathbb{Z}_p$ to $n$ digits, ultrametric operators, Kozyrev wavelets. |
 | `diffrax/_group_algebra/` | Finite groups, representations, Fourier transforms, `GroupODE`, `Lawson`. |
 | `test/` | `test_padic_flow.py`, `test_padic_formal.py`, `test_padic_bounds.py`, `test_padic_interpolation.py`, `test_padic_tables.py`, `test_ultrametric.py`, `test_group_algebra.py`, and the Diffrax tests. |
