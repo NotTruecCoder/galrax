@@ -49,6 +49,8 @@ class EventSet:
     - `period`: `M`, prime to `p`; a ball then stands for `t = t_0 mod M p^level`.
         It is `1` for flows, and for the hitting times of a map it is the part of
         the period modulo `p` that is prime to `p`.
+    - `start`, `tail`: for an orbit that turns periodic only at `n = start`, the
+        balls count for `n >= start` only, and `tail` lists the earlier hits.
     """
 
     balls: list
@@ -56,19 +58,33 @@ class EventSet:
     depth: int
     zero_bound: int | None = field(default=None)
     period: int = 1
+    start: int | None = None
+    tail: tuple = ()
 
     def __contains__(self, t) -> bool:
-        return any(
-            (int(t) - ball.center[0]) % (self.period * self.p**ball.level) == 0
+        t = int(t)
+        if t in self.tail:
+            return True
+        return (self.start is None or t >= self.start) and any(
+            (t - ball.center[0]) % (self.period * self.p**ball.level) == 0
             for ball in self.balls
         )
 
     def __bool__(self) -> bool:
-        return bool(self.balls)
+        return bool(self.balls or self.tail)
 
     def first(self) -> int | None:
         """The smallest non-negative integer time in the set (`None` if empty)."""
-        return min((ball.center[0] for ball in self.balls), default=None)
+        if self.tail:
+            return min(self.tail)
+        s = self.start or 0
+        return min(
+            (
+                s + (ball.center[0] - s) % (self.period * self.p**ball.level)
+                for ball in self.balls
+            ),
+            default=None,
+        )
 
     def measure(self) -> float:
         """The Haar measure of the set, `sum 1 / (M p^level)`."""

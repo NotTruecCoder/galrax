@@ -29,5 +29,11 @@ from .plot import (
     plot_phase_portrait as plot_phase_portrait,
     plot_trajectory as plot_trajectory,
 )
+from .return_set import (
+    companion as companion,
+    linear as linear,
+    Orbit as Orbit,
+    recurrence_times as recurrence_times,
+)
 from .roots import Ball as Ball
 from .series import PowerSeries as PowerSeries

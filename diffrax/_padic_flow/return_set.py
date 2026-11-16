@@ -1,0 +1,268 @@
+"""Return sets and jump-ahead for polynomial maps of `Z_p^d`.
+
+For `x_n = g^n(x)`, modulo `p^e` (`e = 2` for `p = 2`, else `1`) the orbit is a tail
+of length `s` and a cycle of length `L`. In the coordinates `x = c + p^e u` of the
+ball of `x_s`, `g^L` is affine modulo `p^e`, `u -> A u + b` with `A = Dg^L(x_s)`, so
+for `A` invertible modulo `p` the map `G = g^N`, `N = L ord(A) p^e`, is the identity
+modulo `p^e` and the time-one map of a flow `phi` (`PAdicFlow.from_time_one`). Then
+
+    x_{s + iL + j + N q} = g^j(c + p^e phi_q(u_i)),   u_i = (x_{s + iL} - c) / p^e,
+
+for every `q` in `Z_p`: the times of an event along the orbit are, for each
+`r = iL + j < N`, an `EventSet` of the flow, and the classes `n = s + r + N q` glue
+into a union of classes modulo `M p^k`, `M` the part of `N` prime to `p`.
+"""
+
+import math
+
+import numpy as np
+
+from .equilibria import _determinant
+from .events import EventSet, PAdicEvent
+from .flow import PAdicFlow
+from .normal_form import _evaluate, _matmul, _substitute
+from .polynomial import (
+    _derivative,
+    evaluate_exact,
+    parse_field,
+    parse_polynomial,
+    reduce,
+)
+from .roots import _merge, Ball
+
+
+def _unit(i: int, d: int) -> tuple:
+    return tuple(int(j == i) for j in range(d))
+
+
+def _trim(poly: dict, top: int) -> dict:
+    return {k: v for k, v in poly.items() if v and sum(k) <= top}
+
+
+def _degree(polys) -> int:
+    return max((sum(k) for poly in polys for k in poly), default=0)
+
+
+def companion(coefficients) -> list[dict]:
+    """The shift `(a_n, ..., a_{n+k-1}) -> (a_{n+1}, ..., a_{n+k})` of the recurrence
+    `a_{n+k} = c_0 a_n + ... + c_{k-1} a_{n+k-1}`, as a map of `Z_p^k`.
+    """
+    k = len(coefficients)
+    shift = [{_unit(i + 1, k): 1} for i in range(k - 1)]
+    return shift + [{_unit(i, k): c for i, c in enumerate(coefficients) if c}]
+
+
+def linear(matrix) -> list[dict]:
+    """The map `x -> M x`."""
+    d = len(matrix)
+    return [{_unit(j, d): c for j, c in enumerate(row) if c} for row in matrix]
+
+
+class Orbit:
+    """The orbit `x_n = g^n(x)` of a point under a polynomial map `g` of `Z_p^d`,
+    modulo `p^K`: `x_n` for any integer `n` at a cost independent of `n`, and the
+    return set of an event.
+
+    `Dg^L` must be invertible modulo `p` on the cycle of `x` modulo `p^e`; otherwise
+    the orbit falls into an attracting cycle and a `ValueError` is raised.
+
+    **Arguments:**
+
+    - `p`, `precision`: a prime and `K`.
+    - `g`: the map, given like a vector field (`[c_0, c_1, ...]` for `d = 1`, else
+        one `{exponents: coefficient}` per component), with `p`-adic integer
+        coefficients.
+    - `x`: the starting point.
+
+    **Attributes:** `tail` (`s`), `cycle` (`L`), `step` (`N`), `flow` (the flow of
+    `g^N` in the coordinates `u`).
+    """
+
+    def __init__(self, p: int, precision: int, g, x):
+        p, K = int(p), int(precision)
+        g = parse_field(g, p)
+        d = len(g)
+        e = 2 if p == 2 else 1
+        m = p ** (K + e)
+        g = reduce(g, m)
+        x = [int(v) % m for v in np.atleast_1d(np.asarray(x, dtype=object))]
+        if len(x) != d:
+            raise ValueError(f"`x` must be a point of Z_p^{d}.")
+        seen, y = {}, tuple(v % p**e for v in x)
+        while y not in seen:
+            seen[y] = len(seen)
+            y = tuple(evaluate_exact(f, y, p**e) for f in g)
+        s = seen[y]
+        cycle = list(seen)[s:]
+        L = len(cycle)
+        identity = [[int(i == j) for j in range(d)] for i in range(d)]
+        A = identity
+        for point in cycle:
+            jacobian = [
+                [evaluate_exact(_derivative(f, j, p**e), point, p**e) for j in range(d)]
+                for f in g
+            ]
+            A = _matmul(jacobian, A, p**e)
+        if _determinant(A, p) == 0:
+            raise ValueError("Dg^L is not invertible modulo p on the cycle of `x`.")
+        order, power = 1, A
+        while power != identity:
+            power, order = _matmul(power, A, p**e), order + 1
+        N = L * order * p**e
+
+        orbit = [x]
+        for _ in range(s + N - 1):
+            orbit.append([evaluate_exact(f, orbit[-1], m) for f in g])
+
+        # In u, a degree-k coefficient is divisible by p^{e k}: higher ones vanish.
+        top = (K + e - 1) // e
+        zero = (0,) * d
+        c = list(cycle[0])
+        chart = [_trim({zero: c[i], _unit(i, d): p**e}, top) for i in range(d)]
+        charts = [chart]
+        for _ in range(L):
+            cap = max(top, _degree(g))
+            chart = [_trim(_substitute(f, chart, cap, m), top) for f in g]
+            charts.append(chart)
+        H = []
+        for i, f in enumerate(charts.pop()):
+            f = {**f, zero: (f.get(zero, 0) - c[i]) % m}
+            H.append(_trim({k: v // p**e for k, v in f.items()}, top))
+
+        def compose(a, b):
+            return [_substitute(f, b, top, p**K) for f in a]
+
+        G, n = [{_unit(i, d): 1} for i in range(d)], order * p**e
+        while n:
+            if n & 1:
+                G = compose(H, G)
+            H, n = compose(H, H), n >> 1
+
+        self.p, self.precision, self.dimension = p, K, d
+        self.tail, self.cycle, self.step = s, L, N
+        digits = min(K, max(1, int(math.log(32) / math.log(p))))
+        self.flow = PAdicFlow.from_time_one(p, K, G, table_digits=digits)
+        self._g, self._e, self._top, self._centre = g, e, top, c
+        self._orbit, self._charts = orbit, charts
+        self._u = np.array(
+            [
+                [(v - w) // p**e % p**K for v, w in zip(orbit[s + r], c)]
+                for r in range(0, N, L)
+            ],
+            dtype=object,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"Orbit(p={self.p}, precision={self.precision}, dimension="
+            f"{self.dimension}, tail={self.tail}, cycle={self.cycle}, step={self.step})"
+        )
+
+    def _points(self, rows):
+        u = self._u[rows]
+        return u[:, 0] if self.dimension == 1 else u
+
+    def __call__(self, n):
+        """`x_n` modulo `p^K` for integers `n` of any shape; negative `n` when the
+        tail is empty (the inverse on the orbit closure).
+        """
+        p, K, d, e = self.p, self.precision, self.dimension, self._e
+        s, L, N = self.tail, self.cycle, self.step
+        shape = np.shape(n)
+        flat = [int(v) for v in np.asarray(n, dtype=object).reshape(-1)]
+        if s and min(flat, default=0) < 0:
+            raise ValueError("Negative iterates need a point periodic modulo p.")
+        out = np.empty((len(flat), d), dtype=object)
+        early = np.array([0 <= v < s for v in flat], dtype=bool)
+        for k in np.flatnonzero(early):
+            out[k] = self._orbit[flat[k]]
+        late = np.flatnonzero(~early)
+        if len(late):
+            k = np.array([flat[i] - s for i in late], dtype=object)
+            q, r = k // N, k % N
+            y = self.flow.flow(q % p**K, self._points((r // L).astype(int)))
+            y = np.asarray(np.asarray(y), dtype=object).reshape(-1, d)
+            x = (np.array(self._centre, dtype=object) + p**e * y) % p ** (K + e)
+            j = r % L
+            for t in range(1, L):
+                moving = np.flatnonzero(j >= t)
+                if len(moving):
+                    x[moving] = _evaluate(self._g, x[moving], p ** (K + e))
+            out[late] = x
+        out = (out % p**K).reshape(shape + ((d,) if d > 1 else ()))
+        return out[()] if out.ndim == 0 else out
+
+    def times(self, event: PAdicEvent) -> EventSet:
+        """All `n >= 0` with `v_p(h(x_n)) >= depth` for every condition `h` of the
+        event, as an `EventSet` of classes `n = c mod M p^k` valid from `n = tail`
+        on, with the earlier hits in `tail`. For a single condition, `zero_bound`
+        adds Strassmann's bound over every `r < N` to the hits in the tail: an upper
+        bound on the number of `n >= 0` with `h(x_n) = 0` exactly.
+        """
+        p, K, d, e = self.p, self.precision, self.dimension, self._e
+        s, L, N = self.tail, self.cycle, self.step
+        depth = K if event.depth is None else event.depth
+        if not 1 <= depth <= K:
+            raise ValueError(f"`depth` must lie in 1, ..., {K}.")
+        m = p ** (K + e)
+        conditions = reduce([parse_polynomial(h, d, p) for h in event.condition], m)
+
+        def hit(n, digits):
+            return all(
+                evaluate_exact(h, self._orbit[n], p**digits) == 0 for h in conditions
+            )
+
+        tail = tuple(n for n in range(s) if hit(n, depth))
+        a = 0
+        while N % p ** (a + 1) == 0:
+            a += 1
+        M = N // p**a
+        bound, balls = len(tail), []
+        # x_{s + r + N q} = x_{s + r} mod p^{2e}, so most r are ruled out at once.
+        cut = min(depth, 2 * e)
+        for j in range(L):
+            rs = [r for r in range(j, N, L) if hit(s + r, cut)]
+            if not rs:
+                continue
+            cap = max(self._top, _degree(conditions))
+            pulled = [
+                {
+                    k: v % p**K
+                    for k, v in _substitute(h, self._charts[j], cap, m).items()
+                    if sum(k) <= self._top and v % p**K
+                }
+                for h in conditions
+            ]
+            sets = self.flow.event_times(
+                PAdicEvent(pulled, depth), self._points([r // L for r in rs])
+            )
+            for r, found in zip(rs, sets):
+                if bound is not None:
+                    bound = (
+                        None if found.zero_bound is None else bound + found.zero_bound
+                    )
+                for b in found.balls:
+                    level = a + b.level
+                    centre = (s + r + N * b.center[0]) % (M * p**level)
+                    balls.append(Ball((centre,), level))
+        balls = sorted(_merge(balls, p, 1, M), key=lambda b: b.center)
+        return EventSet(balls, p, depth, bound, M, s or None, tail)
+
+    def index(self, y) -> int | None:
+        """The smallest `n >= 0` with `x_n = y` modulo `p^K`, or `None`."""
+        d = self.dimension
+        y = [int(v) for v in np.atleast_1d(np.asarray(y, dtype=object))]
+        conditions = [{_unit(i, d): 1, (0,) * d: -v} for i, v in enumerate(y)]
+        return self.times(PAdicEvent(conditions)).first()
+
+
+def recurrence_times(
+    p: int, precision: int, coefficients, initial, value=0, depth: int | None = None
+) -> EventSet:
+    """The `n >= 0` with `a_n = value` to `depth` digits, for the linear recurrence
+    `a_{n+k} = c_0 a_n + ... + c_{k-1} a_{n+k-1}` started at `initial`, through the
+    orbit of its companion matrix.
+    """
+    k = len(coefficients)
+    event = PAdicEvent({_unit(0, k): 1, (0,) * k: -value}, depth)
+    return Orbit(p, precision, companion(coefficients), initial).times(event)
