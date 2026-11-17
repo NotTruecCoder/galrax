@@ -184,21 +184,43 @@ print(zeros.zero_bound)  # 2
 
 `EventSet.classes` splits Strassmann's bound over the classes $n \equiv c \bmod N$ of an orbit; a class none of whose integers lies in the event set at another prime holds no integer zero. Summing the bounds of the classes that survive several primes, and comparing with the zeros found in exact arithmetic for $|n| \le$ a window, certifies the whole zero set over $\mathbb{Z}$, negative $n$ included, when the two agree. This is the classical Skolem–Mahler–Lech sieve; nothing in it is specific to linear maps.
 
-**Linear recurrences** (`benchmarks/skolem.py`), on the dataset of the SKOLEM tool (Bilu, Luca, Nieuwveld, Ouaknine, Purser, Worrell, *Skolem meets Schanuel*, MFCS 2022): 82,360 random integer recurrences of order 2–10 with entries in $[-20, 20]$. A sample of 50 per order, up to four primes, 60 s per instance, 12 processes:
+**Linear recurrences** (`benchmarks/skolem.py`), on the dataset of the SKOLEM tool (Bilu, Luca, Nieuwveld, Ouaknine, Purser, Worrell, *Skolem meets Schanuel*, MFCS 2022): 82,360 random integer recurrences of order 2–10 with entries in $[-20, 20]$, the order uniform. A sample of 50 per order, 60 s per instance, 12 processes on a laptop. Up to eight primes $p < 200$ are tried, in order of $p$ times the period of $u_n$ modulo $p$ (at most 5000), since the cost of a prime grows with that product and varies by orders of magnitude between primes. SKOLEM's mean times are from its paper (60 s timeout, SageMath on a 16-thread server); the paper gives its success rate only for the whole dataset.
 
-| order | certified | timed out | mean time of certified |
+| order | galrax: certified | galrax: timed out | galrax: mean time of certified | SKOLEM: mean time of solved |
+|---|---|---|---|---|
+| 2 | 50 / 50 | 0 | 0.5 s | 0.03 s |
+| 3 | 50 / 50 | 0 | 1.2 s | 0.05 s |
+| 4 | 50 / 50 | 0 | 5.0 s | 0.19 s |
+| 5 | 41 / 50 | 4 | 17 s | 4.8 s |
+| 6 | 19 / 50 | 3 | 28 s | 9.0 s |
+| 7 | 2 / 50 | 13 | 42 s | 11.7 s |
+| 8 | 1 / 50 | 6 | 53 s | 8.1 s |
+| 9–10 | 0 / 100 | 13 | – | 7.4 s, 5.7 s |
+| **all** | **213 / 450 (47%)** | 39 | | **42,346 / 82,360 (51%)** |
+
+So galrax certifies orders 2–4 completely but is 15–25 times slower than SKOLEM there, and is weaker from order 5 on. SKOLEM's timeouts pass 50% only from order 7, while for galrax most instances of order 7 and above end uncertified: their periods modulo small primes exceed the limit, or the primes that remain do not separate the classes. SKOLEM also adds Baker–Davenport bounds to the sieve, which galrax does not have. Of the examples in the SKOLEM paper, galrax certifies Berstel's sequence (zeros $0, 1, 4, 6, 13, 52$) and Examples 15 and 17 (zeros $2$ and $0, 1, 4$). It does not certify Example 16, where one $p$-adic zero survives all eight primes.
+
+The parameters were tuned on the same sample:
+
+| primes | order of primes | period limit | certified |
 |---|---|---|---|
-| 2 | 50 / 50 | 0 | 0.3 s |
-| 3 | 37 / 50 | 0 | 1.2 s |
-| 4 | 27 / 50 | 1 | 5.6 s |
-| 5 | 10 / 50 | 22 | 15 s |
-| 6 | 2 / 50 | 42 | 22 s |
-| 7 | 1 / 50 | 48 | 43 s |
-| 8–10 | 0 / 150 | 150 | – |
+| 4 | $3, 5, 7, 11, \ldots$ | – | 127 |
+| 4 | by $p \cdot$ period | 2000 | 171 |
+| 8 | by $p \cdot$ period | 5000 | **213** |
+| 8 | by $p \cdot$ period | 20000 | 198 |
+| 8 | by cost per common factor of the periods | 5000 | 214 |
 
-SKOLEM itself, with Baker–Davenport bounds on top of the sieve, solves 51% of the whole dataset in 60 s, and its timeouts pass 50% only from order 7. So for linear recurrences galrax is a weaker solver; it certifies the zeros of Berstel's sequence and of Example 15 of the SKOLEM paper, but not those of Examples 16 and 17, where one $p$-adic zero survives every prime tried. The cost grows with the period $L \le p^k$ of the companion matrix modulo $p$, which is why orders from 5 on time out.
+A larger limit lets in primes too expensive to finish within 60 s. Choosing primes whose periods share factors, which the sieve compares, gains nothing over the simpler order.
 
-**Nonlinear maps** (`benchmarks/nonlinear_skolem.py`), where SKOLEM and other tools for linear recurrences do not apply: orbits of generalised Hénon maps $(x, y) \mapsto (y, \pm x + a_2 y^2 + a_1 y + a_0)$ of $\mathbb{Z}^2$ with $|a_i|, |x_0|, |y_0| \le 5$, and all $n \in \mathbb{Z}$ with $x_n = $ target; half of the targets are values $x_m$, $|m| \le 3$, of the orbit, the rest random in $[-20, 20]$. Of 200 orbits one is periodic over $\mathbb{Z}$ and is solved directly. Of the other 199, 123 are certified within 60 s (mean 23 s), 58 with their zeros and 65 as never reaching the target, and 76 time out. No instance finished uncertified: every orbit that finished in time was settled. To our knowledge no other tool certifies the zero set of a nonlinear orbit over $\mathbb{Z}$.
+**Nonlinear maps** (`benchmarks/nonlinear_skolem.py`), where SKOLEM and other tools for linear recurrences do not apply: orbits of generalised Hénon maps $(x, y) \mapsto (y, \pm x + a_2 y^2 + a_1 y + a_0)$ of $\mathbb{Z}^2$ with $|a_i|, |x_0|, |y_0| \le 5$, and all $n \in \mathbb{Z}$ with $x_n = $ target. For half of the orbits the target is a value $x_m$ of the orbit with $|m| \le 3$; for the rest it is random in $[-20, 20]$. Primes are chosen as for linear recurrences, up to eight, with 60 s per orbit:
+
+| target | orbits | periodic over $\mathbb{Z}$ | certified, with zeros | certified, never reached | not certified | timed out | mean time of certified |
+|---|---|---|---|---|---|---|---|
+| orbit value | 95 | 1 | 54 | 0 | 0 | 40 | 23 s |
+| random | 105 | 0 | 9 | 72 | 0 | 24 | 20 s |
+| **all** | **200** | **1** | **63** | **72** | **0** | **64** | **21 s** |
+
+The periodic orbit is solved directly. Of the other 199, 135 are certified: for 63 the list of zeros is complete, and for 72 the target is never reached at any $n \in \mathbb{Z}$. With the fixed primes $3, 5, 7, 11$ the count was 123. No orbit finished without a certificate: every one that finished in time was settled. To our knowledge no other tool certifies the zero set of a nonlinear orbit over $\mathbb{Z}$.
 
 ### Speed
 

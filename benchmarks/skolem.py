@@ -6,15 +6,18 @@ The dataset is `datasets/mfcs.tpls` of github.com/davidjpurser/skolem-solver
 `u_n = r_0 u_{n-1} + ... + r_{k-1} u_{n-k}`, `k = 2, ..., 10`, coefficients and
 initial values in `[-20, 20]`, one `(k, (r_0, ...), (u_0, ...))` per line.
 
-For each sampled recurrence, `recurrence_times` is run at primes `p` not dividing
-`r_{k-1}`, so the companion matrix is invertible modulo `p` and the orbit has no
-tail. Its `classes` bound, by Strassmann's theorem on each class `n = c + N q` with
-`q` in `Z_p`, the number of zeros at every integer `n` of the class, negative ones
-included. A class none of whose integers lies in the set of another prime holds no
-integer zero and is dropped (the Skolem--Mahler--Lech sieve). The exact zeros with
-`|n| <= window` are counted in exact arithmetic: when their number reaches the sum
-of the remaining bounds, the zero set over `Z` is certified complete. Otherwise
-(after four primes, for a degenerate recurrence, or past the time limit) the
+For each sampled recurrence, `recurrence_times` is run at primes `p < 200` not
+dividing `r_{k-1}`, so the companion matrix is invertible modulo `p` and the orbit
+has no tail, taken in order of `p` times the period of `u_n` modulo `p` (at most
+5000): the cost of a prime grows with that product, and it varies by orders of
+magnitude between primes. The `classes` of each set bound, by Strassmann's theorem
+on each class `n = c + N q` with `q` in `Z_p`, the number of zeros at every integer
+`n` of the class, negative ones included. A class none of whose integers lies in
+the set of another prime holds no integer zero and is dropped (the
+Skolem--Mahler--Lech sieve). The exact zeros with `|n| <= window` are counted in
+exact arithmetic: when their number reaches the sum of the remaining bounds, the
+zero set over `Z` is certified complete. Otherwise
+(after eight primes, for a degenerate recurrence, or past the time limit) the
 instance counts as not certified.
 
     python benchmarks/skolem.py mfcs.tpls --per-order 100 --timeout 60
@@ -27,9 +30,37 @@ import multiprocessing as mp
 import random
 import time
 from fractions import Fraction
+from functools import partial
 
 
-PRIMES = (3, 5, 7, 11, 13, 17, 19, 23)
+PRIMES = tuple(p for p in range(3, 200) if all(p % q for q in range(2, p)))
+
+
+def cycle(recurrence, initial, p, cap):
+    """The period of `u_n` modulo `p` (no tail when `p` does not divide
+    `r_{k-1}`), or `None` past `cap`.
+    """
+    start = state = tuple(v % p for v in initial)
+    for n in range(1, cap + 1):
+        head = sum(r * v for r, v in zip(recurrence, reversed(state))) % p
+        state = state[1:] + (head,)
+        if state == start:
+            return n
+    return None
+
+
+def cheap_primes(recurrence, initial, count, cap=5000):
+    """The `count` primes not dividing `r_{k-1}` with the shortest period of the
+    sequence modulo `p`: the cost of a prime grows with `p` times that period.
+    """
+    periods = []
+    for p in PRIMES:
+        if recurrence[-1] % p == 0:
+            continue
+        L = cycle(recurrence, initial, p, cap)
+        if L is not None:
+            periods.append((L * p, p))
+    return [p for _, p in sorted(periods)[:count]]
 
 
 def exact_zeros(recurrence, initial, window):
@@ -77,7 +108,7 @@ def sieve(sets):
     return best
 
 
-def solve(case, window=200, primes=4):
+def solve(case, window=200, primes=8, cap=5000):
     import jax
 
     jax.config.update("jax_enable_x64", True)
@@ -91,9 +122,7 @@ def solve(case, window=200, primes=4):
         result["certified"], result["zero_sequence"] = True, True
         return result | {"seconds": time.perf_counter() - start}
     sets = []
-    for p in PRIMES:
-        if recurrence[-1] % p == 0:
-            continue
+    for p in cheap_primes(recurrence, initial, primes, cap):
         precision = max(4, int(30 / p.bit_length()))
         events = recurrence_times(p, precision, list(reversed(recurrence)), initial)
         # Soundness: every exact zero n >= 0 must lie in the computed classes.
@@ -166,6 +195,8 @@ def main():
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--processes", type=int, default=mp.cpu_count())
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--primes", type=int, default=8)
+    parser.add_argument("--cap", type=int, default=5000)
     args = parser.parse_args()
 
     with open(args.dataset) as f:
@@ -175,7 +206,8 @@ def main():
     for k in range(2, 11):
         of_order = [c for c in cases if c[0] == k]
         sample += rng.sample(of_order, min(args.per_order, len(of_order)))
-    results = run(sample, args.timeout, args.processes)
+    solver = partial(solve, primes=args.primes, cap=args.cap)
+    results = run(sample, args.timeout, args.processes, solver)
 
     print("| order | instances | certified | timed out | mean time of certified (s) |")
     print("|---|---|---|---|---|")

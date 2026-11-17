@@ -7,4 +7,4 @@ equations on finite groups, in JAX.
 - `galrax.groups`: differential equations on finite groups, solved with Diffrax.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

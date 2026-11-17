@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use galrax, please cite it as below."
+type: software
+title: "galrax: exact solvers for differential equations over the p-adic numbers and on finite groups, in JAX"
+authors:
+  - family-names: Terskii
+    given-names: Kirill
+version: 0.1.1
+date-released: 2026-11-17
+license: Apache-2.0
+repository-code: "https://github.com/NotTruecCoder/galrax"
+keywords:
+  - differential equations
+  - p-adic numbers
+  - finite groups
+  - ultrametric diffusion
+  - formal groups
+  - dynamical systems
+  - Skolem problem
+  - JAX
+references:
+  - type: software
+    title: Diffrax
+    authors:
+      - family-names: Kidger
+        given-names: Patrick
+    repository-code: "https://github.com/patrick-kidger/diffrax"
+    license: Apache-2.0

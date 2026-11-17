@@ -9,11 +9,12 @@ a unit at every prime: every orbit is within the scope of `Orbit`. SKOLEM and
 other tools for linear recurrences do not apply.
 
 The certificate is the one of `benchmarks/skolem.py`: Strassmann's bound on each
-class `n = c mod N` at several primes, classes that miss another prime's set
-dropped, compared with the exact zeros for `|n| <= window` computed in integers.
-Orbits that are periodic over `Z` are solved exactly and reported apart.
+class `n = c mod N` at up to eight primes, taken in order of `p` times the period
+of the orbit modulo `p`, classes that miss another prime's set dropped, compared
+with the exact zeros for `|n| <= window` computed in integers. Orbits that are
+periodic over `Z` are solved exactly and reported apart.
 
-    python benchmarks/nonlinear_skolem.py --count 300 --timeout 60
+    python benchmarks/nonlinear_skolem.py --count 200 --timeout 60
 """
 
 import argparse
@@ -23,7 +24,23 @@ import time
 from skolem import run, sieve
 
 
-PRIMES = (3, 5, 7, 11, 13)
+PRIMES = tuple(p for p in range(3, 200) if all(p % q for q in range(2, p)))
+
+
+def cheap_primes(c, P, start, count, cap=5000):
+    """The `count` primes with the least `p` times the period of the orbit modulo
+    `p` (the map is invertible, so the orbit is a pure cycle).
+    """
+    costs = []
+    for p in PRIMES:
+        point = first = (start[0] % p, start[1] % p)
+        for n in range(1, cap + 1):
+            x, y = point
+            point = (y, (c * x + sum(a * y**i for i, a in enumerate(P))) % p)
+            if point == first:
+                costs.append((n * p, p))
+                break
+    return [p for _, p in sorted(costs)[:count]]
 
 
 def orbit(c, P, start, window):
@@ -52,22 +69,22 @@ def exact_hits(c, P, start, target, window):
     return sorted(n for n, (x, _) in points.items() if x == target), period
 
 
-def solve(case, window=14, primes=4):
+def solve(case, window=14, primes=8):
     import jax
 
     jax.config.update("jax_enable_x64", True)
     from galrax.padic import Orbit, PAdicEvent
 
-    c, P, start, target = case
+    kind, c, P, start, target = case
     began = time.perf_counter()
     zeros, period = exact_hits(c, P, start, target, window)
-    result = {"order": 2, "zeros": zeros, "certified": False, "bound": None}
+    result = {"order": kind, "zeros": zeros, "certified": False, "bound": None}
     if period is not None:
         return result | {"periodic": period, "seconds": time.perf_counter() - began}
     g = [{(0, 1): 1}, {(1, 0): c, **{(0, i): a for i, a in enumerate(P) if a}}]
     event = PAdicEvent({(1, 0): 1, (0, 0): -target})
     sets = []
-    for p in PRIMES:
+    for p in cheap_primes(c, P, start, primes):
         precision = max(4, int(30 / p.bit_length()))
         events = Orbit(p, precision, g, start).times(event)
         assert all(n in events for n in zeros if n >= 0), (case, p)
@@ -87,7 +104,7 @@ def main():
     import skolem
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--count", type=int, default=300)
+    parser.add_argument("--count", type=int, default=200)
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--processes", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
@@ -98,27 +115,31 @@ def main():
     for _ in range(args.count):
         P = [rng.randint(-5, 5), rng.randint(-5, 5), rng.choice([-3, -2, -1, 1, 2, 3])]
         start, c = (rng.randint(-5, 5), rng.randint(-5, 5)), rng.choice([1, -1])
-        target = rng.randint(-20, 20)
+        target, kind = rng.randint(-20, 20), "random"
         if rng.random() < 0.5:  # half the targets are values of the orbit
-            target = orbit(c, P, start, 3)[rng.randint(-3, 3)][0]
-        cases.append((c, P, start, target))
+            target, kind = orbit(c, P, start, 3)[rng.randint(-3, 3)][0], "orbit value"
+        cases.append((kind, c, P, start, target))
     results = run(cases, args.timeout, args.processes or skolem.mp.cpu_count(), solve)
 
-    done = [r for r in results if r.get("certified")]
-    periodic = [r for r in results if "periodic" in r]
-    late = [r for r in results if r.get("timeout")]
-    errors = [r for r in results if "error" in r]
-    hitting = [r for r in done if r["zeros"]]
-    print(f"instances: {len(results)}")
-    print(f"periodic over Z (solved exactly): {len(periodic)}")
     print(
-        f"certified: {len(done)} of {len(results) - len(periodic)}, "
-        f"{len(hitting)} with zeros, {len(done) - len(hitting)} never reach the target"
+        "| target | orbits | periodic over Z | certified, with zeros "
+        "| certified, never reached | not certified | timed out | mean time (s) |"
     )
-    if done:
-        mean = sum(r["seconds"] for r in done) / len(done)
-        print(f"mean time of certified: {mean:.2f} s")
-    print(f"timed out: {len(late)}; errors: {len(errors)}")
+    print("|---|---|---|---|---|---|---|---|")
+    for kind in ("orbit value", "random", None):
+        rows = [r for r in results if kind is None or r["order"] == kind]
+        done = [r for r in rows if r.get("certified")]
+        hitting = sum(1 for r in done if r["zeros"])
+        periodic = sum(1 for r in rows if "periodic" in r)
+        late = sum(1 for r in rows if r.get("timeout"))
+        rest = len(rows) - len(done) - periodic - late
+        mean = sum(r["seconds"] for r in done) / len(done) if done else float("nan")
+        print(
+            f"| {kind or 'all'} | {len(rows)} | {periodic} | {hitting} "
+            f"| {len(done) - hitting} | {rest} | {late} | {mean:.1f} |"
+        )
+    errors = [r for r in results if "error" in r]
+    print(f"\nerrors: {len(errors)}")
     for r in errors[:5]:
         print(r)
 
