@@ -220,7 +220,9 @@ A larger limit lets in primes too expensive to finish within 60 s. Choosing prim
 | random | 105 | 0 | 9 | 72 | 0 | 24 | 20 s |
 | **all** | **200** | **1** | **63** | **72** | **0** | **64** | **21 s** |
 
-The periodic orbit is solved directly. Of the other 199, 135 are certified: for 63 the list of zeros is complete, and for 72 the target is never reached at any $n \in \mathbb{Z}$. With the fixed primes $3, 5, 7, 11$ the count was 123. No orbit finished without a certificate: every one that finished in time was settled. To our knowledge no other tool certifies the zero set of a nonlinear orbit over $\mathbb{Z}$.
+The periodic orbit is solved directly. Of the other 199, 135 are certified: for 63 the list of zeros is complete, and for 72 the target is never reached at any $n \in \mathbb{Z}$. With the fixed primes $3, 5, 7, 11$ the count was 123. No orbit finished without a certificate: every one that finished in time was settled.
+
+These instances have a much simpler archimedean solution. Outside a bounded square the forward orbit of a Hénon map escapes with $|x_n|$ increasing, and so does the backward orbit (the filtration of Bedford–Smillie and Friedland–Milnor). An exact integer computation therefore decides each instance after an explicit number of steps, either reaching a cycle or leaving the square, and would settle all 200 orbits, the 64 timeouts included, almost instantly. The benchmark is thus a test of the $p$-adic certificate on problems whose answer is known by other means, not a case where it is the only method. The certificate itself uses no archimedean information, so it also applies where no such filtration exists, for example to orbits in $\mathbb{Z}_p^2$.
 
 ### Speed
 
