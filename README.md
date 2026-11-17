@@ -26,6 +26,11 @@ What it can do:
 - **Compute certified normal forms.** Near an equilibrium, the Poincaré–Dulac normal form is built through the Smith form of the homological operator over $\mathbb{Z}_p$. Complex eigenvalues, Jordan blocks, resonances and zero eigenvalues all go through the same algorithm. Each result comes with a certificate, rechecked in exact arithmetic, that the flow through the normal form is exact modulo $p^K$.
 - **Compute $p$-adic elliptic logarithms.** The formal logarithm of $\mathbb{G}_m$ or of an elliptic curve is the flow-box coordinate of an explicit field, so the flow machinery computes it exactly, together with multiples $[t]P$ for $p$-adic $t$.
 - **Analyse discrete maps.** Cycle trees and minimal decompositions of polynomial and 1-Lipschitz maps of $\mathbb{Z}_p$.
+- **Solve return sets of polynomial maps of $\mathbb{Z}_p^d$.** `Orbit` turns a power of the map into a flow near its cycle, so the times $n$ with $h(x_n) \equiv 0$ are a finite union of residue classes with Strassmann's bound on the exact zeros; linear recurrences go through their companion matrix (`recurrence_times`).
+- **Jump ahead in batches.** `PAdicMap.iterate` evaluates $g^n(x)$ for an array of $n$ at a cost independent of $n$, for maps of $\mathbb{Z}_p^d$; `period` gives the least period and `matrix_power_index` the first $n$ with $(M^n v)_i = y$ (Chebyshev, Lucas, Dickson).
+- **Compute formal groups of any dimension and Chabauty zeros.** `FormalGroup` builds the logarithm from commuting flows of the invariant differentials; `tiny_integrals` and `chabauty_zeros` find the zeros of $\int\omega$ in a residue disc of $y^2 = f(x)$.
+- **Scan for minimal actions on surfaces.** `examples/lattice_scan.py` certifies minimal actions of the Vieta involutions on the four-holed sphere family $x^2 + y^2 + z^2 + xyz = ax + by + cz + d$.
+- **Train invertible $p$-adic layers.** `examples/padic_layer.py`: the time-one map of a polynomial field is an exactly invertible layer, fitted digit by digit through linear systems modulo $p$, without gradients.
 
 The methods are described in the preprint *Exact flows and normal forms of differential equations over the $p$-adic integers* (K. Terskii, in preparation).
 
@@ -87,7 +92,7 @@ print(doubling.minimal_decomposition(4))  # the spheres |x| = 5^-k are minimal; 
 print(pf.PAdicMap(2, lambda x: x + (x * x | 5)).is_minimal(16))  # Klimov-Shamir: True
 
 qcg = pf.PAdicMap(2, [1, 3, 2])  # x -> 2x^2 + 3x + 1 mod 2^64
-y = qcg.iterate(0, 10**30, 64)  # same cost for every n after a set-up of up to p^3 * level steps per start
+y = qcg.iterate(0, 10**30, 64)  # same cost for every n after a set-up of N * 64 steps, N <= 32 for p = 2
 print(qcg.index(0, y, 64) == 10**30 % 2**64)  # True: the index of a value
 mba = pf.PAdicMap(2, [3, 5, 2])  # an MBA permutation polynomial
 print(mba.iterate(mba(12345, 32), -1, 32))  # 12345: n = -1 is the inverse, 1/3 a cube root
@@ -174,6 +179,26 @@ ell = pf.tiny_integrals(f, 7, 8, (3, 6), (10, -120))
 zeros = pf.chabauty_zeros(f, 7, 8, (3, 6), (ell[1], -ell[0]))
 print(zeros.zero_bound)  # 2
 ```
+
+### The Skolem problem: benchmarks
+
+`EventSet.classes` splits Strassmann's bound over the classes $n \equiv c \bmod N$ of an orbit; a class none of whose integers lies in the event set at another prime holds no integer zero. Summing the bounds of the classes that survive several primes, and comparing with the zeros found in exact arithmetic for $|n| \le$ a window, certifies the whole zero set over $\mathbb{Z}$, negative $n$ included, when the two agree. This is the classical Skolem–Mahler–Lech sieve; nothing in it is specific to linear maps.
+
+**Linear recurrences** (`benchmarks/skolem.py`), on the dataset of the SKOLEM tool (Bilu, Luca, Nieuwveld, Ouaknine, Purser, Worrell, *Skolem meets Schanuel*, MFCS 2022): 82,360 random integer recurrences of order 2–10 with entries in $[-20, 20]$. A sample of 50 per order, up to four primes, 60 s per instance, 12 processes:
+
+| order | certified | timed out | mean time of certified |
+|---|---|---|---|
+| 2 | 50 / 50 | 0 | 0.3 s |
+| 3 | 37 / 50 | 0 | 1.2 s |
+| 4 | 27 / 50 | 1 | 5.6 s |
+| 5 | 10 / 50 | 22 | 15 s |
+| 6 | 2 / 50 | 42 | 22 s |
+| 7 | 1 / 50 | 48 | 43 s |
+| 8–10 | 0 / 150 | 150 | – |
+
+SKOLEM itself, with Baker–Davenport bounds on top of the sieve, solves 51% of the whole dataset in 60 s, and its timeouts pass 50% only from order 7. So for linear recurrences galrax is a weaker solver; it certifies the zeros of Berstel's sequence and of Example 15 of the SKOLEM paper, but not those of Examples 16 and 17, where one $p$-adic zero survives every prime tried. The cost grows with the period $L \le p^k$ of the companion matrix modulo $p$, which is why orders from 5 on time out.
+
+**Nonlinear maps** (`benchmarks/nonlinear_skolem.py`), where SKOLEM and other tools for linear recurrences do not apply: orbits of generalised Hénon maps $(x, y) \mapsto (y, \pm x + a_2 y^2 + a_1 y + a_0)$ of $\mathbb{Z}^2$ with $|a_i|, |x_0|, |y_0| \le 5$, and all $n \in \mathbb{Z}$ with $x_n = $ target; half of the targets are values $x_m$, $|m| \le 3$, of the orbit, the rest random in $[-20, 20]$. Of 200 orbits one is periodic over $\mathbb{Z}$ and is solved directly. Of the other 199, 123 are certified within 60 s (mean 23 s), 58 with their zeros and 65 as never reaching the target, and 76 time out. No instance finished uncertified: every orbit that finished in time was settled. To our knowledge no other tool certifies the zero set of a nonlinear orbit over $\mathbb{Z}$.
 
 ### Speed
 
@@ -297,15 +322,15 @@ print(solution.ys.shape)  # (11, 24)
 
 $\mathbb{Z}_p$ can be drawn on the line with the Monna map $\sum a_k p^k \mapsto \sum a_k p^{-k-1}$, where balls become intervals, or in the plane with $\sum a_k p^k \mapsto \sum \omega^{a_k} \rho^k$, $\omega = e^{2\pi i/p}$, where balls become nested clusters (a Sierpinski triangle for $p = 3$). `examples/padic_figures.py` draws all of these.
 
-![](imgs/padic/fractal_orbits.png)
+![](https://raw.githubusercontent.com/NotTruecCoder/galrax/main/imgs/padic/fractal_orbits.png)
 
 One orbit of $dx/dt = c - cx + 2cx^3$ for each prime: a whole cluster, that is, a ball.
 
 | | |
 |---|---|
-| ![](imgs/padic/p3_trajectory.png) | ![](imgs/padic/p3_phase.png) |
+| ![](https://raw.githubusercontent.com/NotTruecCoder/galrax/main/imgs/padic/p3_trajectory.png) | ![](https://raw.githubusercontent.com/NotTruecCoder/galrax/main/imgs/padic/p3_phase.png) |
 | $t \mapsto \varphi_t(x)$ in Monna coordinates for $p = 3$. Each orbit fills a band of height exactly $\lvert f(x) \rvert_p$. | Eight orbits of $\varphi_1$ for $x' = 3y$, $y' = -3x + 3x^2$ on $\mathbb{Z}_3^2$; the equilibria are black. |
-| ![](imgs/padic/p3_advection.png) | ![](imgs/padic/p3_kozyrev.png) |
+| ![](https://raw.githubusercontent.com/NotTruecCoder/galrax/main/imgs/padic/p3_advection.png) | ![](https://raw.githubusercontent.com/NotTruecCoder/galrax/main/imgs/padic/p3_kozyrev.png) |
 | Transport along the flow plus ultrametric diffusion, from the indicator of a small ball. | Kozyrev wavelets, one per level. |
 
 More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
@@ -384,6 +409,8 @@ pip install -e . pytest scipy beartype
 pytest test/test_padic_formal.py test/test_padic_bounds.py test/test_padic_interpolation.py test/test_padic_tables.py   # quick
 pytest test/test_group_algebra.py test/test_ultrametric.py test/test_padic_flow.py   # slow
 python benchmarks/padic_flow.py   # GPU throughput and set-up times
+python benchmarks/skolem.py mfcs.tpls --per-order 50   # SKOLEM dataset, see the docstring
+python benchmarks/nonlinear_skolem.py --count 200
 ```
 
 `pytest test` runs everything; `test_group_algebra.py` needs a few GB of memory.
