@@ -1,17 +1,13 @@
-import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 
-from .arithmetic import factorial_valuation, is_prime
+from .arithmetic import is_prime
 from .events import EventSet, PAdicEvent
-from .polynomial import evaluate_exact, parse_field, parse_polynomial, reduce
+from .polynomial import evaluate_exact, parse_field, reduce
 from .return_set import linear, Orbit
-from .roots import _merge, Ball, vanishing_set
 
 
 @dataclass
@@ -84,8 +80,9 @@ class PAdicMap:
         `Fraction`s with denominators prime to `p`), or a function taking a
         non-negative Python integer and returning an integer. A polynomial map of
         `Z_p^d` is given like a vector field, one `{exponents: coefficient}` per
-        component: points are then tuples, and `iterate`, `index`, `period` and
-        `hitting_times` go through an `Orbit`; the cycle tree needs `d = 1`.
+        component: points are then tuples; the cycle tree needs `d = 1`. For
+        polynomials `iterate`, `index`, `period` and `hitting_times` go through an
+        `Orbit`.
     """
 
     def __init__(self, p: int, map: list | Callable[[int], int]):
@@ -346,10 +343,6 @@ class PAdicMap:
             self._jumps[key] = build()
         return self._jumps[key]
 
-    def _jump(self, x: int, level: int):
-        key = (int(x) % self.p**level, int(level))
-        return self._cached(key, lambda: self._jump_table(*key))
-
     def orbit(self, x, level: int) -> Orbit:
         """The `Orbit` of a point modulo `p^level`, for a polynomial map (cached)."""
         if not (self.components or self.is_polynomial):
@@ -358,182 +351,52 @@ class PAdicMap:
         maps = self.components or self.coefficients
         return self._cached((x, int(level)), lambda: Orbit(self.p, level, maps, x))
 
-    def _iterate_many(self, x: int, n: np.ndarray, level: int) -> np.ndarray:
-        """`iterate` over an integer array: Horner's rule on the tables, in `int64`
-        JAX arrays while products of residues fit, else in Python integers.
-        """
-        tail, step, tables = self._jump(x, level)
-        m = self.p**level
-        if tail and (n < 0).any():
-            raise ValueError("Negative iterates need an orbit periodic modulo p.")
-        q, r = (n - len(tail)) // step % m, (n - len(tail)) % step
-        fast = m < 2**31 and jax.config.jax_enable_x64
-        xp, dtype = (jnp, np.int64) if fast else (np, object)
-        table = xp.asarray(np.array(tables, dtype=dtype))
-        q, r = xp.asarray(q.astype(dtype)), xp.asarray(r.astype(np.int64))
-        total = xp.zeros_like(q)
-        for j in reversed(range(table.shape[1])):
-            total = (total * q + table[r, j]) % m
-        out = np.asarray(total).astype(object)
-        if tail:
-            early = (n < len(tail)).astype(bool)
-            out[early] = np.array(tail, dtype=object)[n[early].astype(np.int64)]
-        return out
-
-    def _jump_table(self, x: int, level: int):
-        """The tail `x_0, ..., x_{s-1}` before the orbit turns periodic modulo `p^e`
-        (`e = 2` for `p = 2`, else `1`), a step `N`, and for every `r < N` the
-        polynomial in `q` equal to `x_{s + r + N q}` modulo `p^level`.
-
-        With `L` the period modulo `p^e` and `a` the multiplier of that cycle,
-        `T^N` for `N = L ord(a) p^e` is the identity modulo `p^e` on the ball around
-        `x_s`, so `q -> x_{s + r + N q}` is a power series whose `q^m` coefficient
-        has valuation `>= m (e - 1/(p - 1))`. Its Mahler coefficients come from the
-        first `J` terms, `J (e - 1/(p - 1)) >= level`.
-        """
-        if not self.is_polynomial:
-            raise ValueError("Jump-ahead needs a polynomial map.")
-        p = self.p
-        e = 2 if p == 2 else 1
-        seen, y = {}, x % p**e
-        while y not in seen:
-            seen[y] = len(seen)
-            y = self(y, e)
-        start = seen[y]
-        a = 1
-        for point in list(seen)[start:]:
-            a = a * self.derivative(point, e) % p**e
-        if a % p == 0:
-            raise ValueError("The orbit falls into an attracting cycle modulo p.")
-        order = 1
-        while pow(a, order, p**e) != 1:
-            order += 1
-        step = (len(seen) - start) * order * p**e
-        terms = -(-level * (p - 1) // (e * (p - 1) - 1))
-        work = level + factorial_valuation(terms - 1, p)
-        orbit = [x % p**work]
-        for _ in range(start + step * terms - 1):
-            orbit.append(self(orbit[-1], work))
-        m = p**level
-        tail, orbit = [y % m for y in orbit[:start]], orbit[start:]
-        tables = []
-        for r in range(step):
-            differences = orbit[r::step]
-            poly, falling = [0] * terms, [1]
-            for j in range(terms):
-                v = factorial_valuation(j, p)
-                if differences[0] % p**v:
-                    raise RuntimeError(f"Delta^{j} is not divisible by {j}!.")
-                unit = math.factorial(j) // p**v
-                b = differences[0] // p**v * pow(unit, -1, m)
-                for i, c in enumerate(falling):
-                    poly[i] = (poly[i] + b * c) % m
-                falling = [0] + falling
-                for i in range(j + 1):
-                    falling[i] = (falling[i] - j * falling[i + 1]) % m
-                differences = [u - w for w, u in zip(differences, differences[1:])]
-            tables.append(poly)
-        return tail, step, tables
-
     def iterate(self, x, n, level: int):
         """`T^n(x) mod p^level` for a polynomial `T`, at a cost independent of `n`
-        once `(x, level)` is set up.
+        once `(x, level)` is set up, through `Orbit`.
 
-        `n` is a non-negative integer; a negative one when `x` is periodic modulo
-        `p` (modulo `4` for `p = 2`), giving the preimage on the orbit closure, the
-        inverse for a bijection; a `Fraction` with denominator prime to `p` when the
-        period modulo `p` is also a power of `p`, as for every permutation
-        polynomial modulo `2^w`: `n = 1/m` is an `m`-th root.
+        `n` is an integer or an array of integers; negative when `x` is periodic
+        modulo `p` (modulo `4` for `p = 2`), giving the preimage on the orbit closure,
+        the inverse for a bijection; or a `Fraction` with denominator prime to `p`
+        when moreover the step `N` of the orbit is a power of `p`, as for every
+        permutation polynomial modulo `2^w`: `n = 1/m` is an `m`-th root.
 
-        The set-up iterates `T` about `L ord(a) p^e J` times, with `L <= p^e` the
-        period modulo `p^e`, `ord(a) < p` and `J ~ level`: fine for small `p`, slow
-        for large ones (40 s for `p = 1009`, three digits). The last 64 set-ups are
-        kept.
-
-        An array `n` of integers is done at once, in `int64` JAX arrays up to
-        `p^level < 2^31`. For a map of `Z_p^d`, `n` is any array of integers.
+        The set-up iterates `T` about `N J` times, `N = L ord(A) p^e` with `L` the
+        period modulo `p^e` and `J ~ level`: fine for small `p`, slow for large ones.
+        The last 64 set-ups are kept.
         """
-        if self.components is not None:
-            return self.orbit(x, level)(n)
-        if np.ndim(n):
-            return self._iterate_many(x, np.asarray(n, dtype=object), level)
-        tail, step, tables = self._jump(x, level)
-        n = Fraction(n)
-        if n.denominator == 1 and 0 <= n < len(tail):
-            return tail[int(n)]
-        if n.denominator == 1 and (n >= 0 or not tail):
-            q, r = divmod(int(n) - len(tail), step)
-        elif tail:
-            raise ValueError("Negative iterates need an orbit periodic modulo p.")
-        elif not _is_power(step, self.p):
-            raise ValueError(
-                "p-adic iterates need a period modulo p that is a power of p."
-            )
-        elif n.denominator % self.p == 0:
-            raise ValueError("`n` must be a p-adic integer.")
-        else:
-            modulus = step * self.p**level
-            t = n.numerator * pow(n.denominator, -1, modulus) % modulus
-            q, r = divmod(t, step)
-        m = self.p**level
-        total = 0
-        for c in reversed(tables[r]):
-            total = (total * q + c) % m
-        return total
-
-    def _hits(self, x: int, conditions: list, level: int, depth: int):
-        """For each `r`, the balls of `q` with `v_p(g(x_{s + r + N q})) >= depth` for
-        every `g`: `g(x_{s + r + N q})` is a polynomial in `q`, refined digit by digit.
-        """
-        tail, step, tables = self._jump(x, level)
-        if not 1 <= depth <= level:
-            raise ValueError(f"`depth` must lie in 1, ..., {level}.")
-        m = self.p**level
-        conditions = reduce([parse_polynomial(g, 1, self.p) for g in conditions], m)
-        hits = []
-        for r, f in enumerate(tables):
-            polys = []
-            for g in conditions:
-                h = [0] * len(f)
-                for k in reversed(range(max((e for (e,) in g), default=0) + 1)):
-                    h = _product(h, f, m)
-                    h[0] = (h[0] + g.get((k,), 0)) % m
-                polys.append({(i,): c for i, c in enumerate(h) if c})
-            hits += [(r, b) for b in vanishing_set(polys, 1, self.p, level, depth)]
-        return tail, step, hits
+        orbit = self.orbit(x, level)
+        if isinstance(n, Fraction) and n.denominator != 1:
+            if orbit.tail:
+                raise ValueError("p-adic iterates need a point periodic modulo p.")
+            if not _is_power(orbit.step, self.p):
+                raise ValueError(
+                    "p-adic iterates need a period modulo p that is a power of p."
+                )
+            if n.denominator % self.p == 0:
+                raise ValueError("`n` must be a p-adic integer.")
+            # x_{N q + r} is analytic in q, so a p-adic n is read modulo N p^level.
+            modulus = orbit.step * self.p**level
+            n = n.numerator * pow(n.denominator, -1, modulus) % modulus
+        elif isinstance(n, Fraction):
+            n = int(n)
+        out = orbit(n)
+        return int(out) if np.ndim(out) == 0 else out
 
     def index(self, x, y, level: int) -> int | None:
         """The smallest `n >= 0` with `T^n(x) = y mod p^level`, or `None`."""
-        if self.components is not None:
-            return self.orbit(x, level).index(y)
-        tail, step, hits = self._hits(x, [[-int(y), 1]], level, level)
-        y = int(y) % self.p**level
-        if y in tail:
-            return tail.index(y)
-        return min((len(tail) + r + step * b.center[0] for r, b in hits), default=None)
+        return self.orbit(x, level).index(y)
 
     def hitting_times(self, x, event: PAdicEvent, level: int) -> EventSet:
         """All `n >= 0` at which the loop `x <- T(x)` on `Z/p^level`, started at `x`,
         is in `Bad = {v_p(g) >= depth for every condition g of the event}`.
 
-        The answer is a union of classes `n = c mod M p^k`, `M` prime to `p` (`M = 1`
-        for `p = 2`): an `EventSet` with `period = M`. Since `Z` lies in `Z_p`, an
-        empty set for integer `T`, `x` and `g` proves that the loop over `Z` never
-        reaches `g = 0`. `x` must be periodic modulo `p` (modulo `4` for `p = 2`).
+        The answer is a union of classes `n = c mod M p^k`, `M` prime to `p`, from
+        the end of the tail on, plus the hits in the tail: see `Orbit.times`. Since
+        `Z` lies in `Z_p`, an empty set for integer `T`, `x` and `g` proves that the
+        loop over `Z` never reaches `g = 0`.
         """
-        if self.components is not None:
-            return self.orbit(x, level).times(event)
-        depth = level if event.depth is None else event.depth
-        tail, step, hits = self._hits(x, event.condition, level, depth)
-        if tail:
-            raise ValueError("`x` is not periodic modulo p: start the loop later.")
-        s = 0
-        while step % self.p ** (s + 1) == 0:
-            s += 1
-        period = step // self.p**s
-        balls = [Ball((r + step * b.center[0],), b.level + s) for r, b in hits]
-        balls = sorted(_merge(balls, self.p, 1, period), key=lambda b: b.center)
-        return EventSet(balls, self.p, depth, None, period)
+        return self.orbit(x, level).times(event)
 
     def period(self, x, level: int) -> int:
         """The least period of `x` modulo `p^level`, for `x` periodic modulo `p`
@@ -547,8 +410,7 @@ class PAdicMap:
             {tuple(int(j == i) for j in range(d)): 1, (0,) * d: -v}
             for i, v in enumerate(y)
         ]
-        point = y if self.components is not None else y[0]
-        times = self.hitting_times(point, PAdicEvent(conditions), level)
+        times = self.hitting_times(y, PAdicEvent(conditions), level)
         # The times form P Z: classes k P modulo M p^level, all of one level.
         return min(b.center[0] or times.period * self.p**b.level for b in times.balls)
 
@@ -571,13 +433,3 @@ def _is_power(n: int, p: int) -> bool:
     while n % p == 0:
         n //= p
     return n == 1
-
-
-def _product(a: list, b: list, m: int) -> list:
-    """`a b mod m`, cut to `len(a)` terms."""
-    out = [0] * len(a)
-    for i, c in enumerate(a):
-        if c:
-            for j in range(len(a) - i):
-                out[i + j] = (out[i + j] + c * b[j]) % m
-    return out

@@ -15,16 +15,25 @@ into a union of classes modulo `M p^k`, `M` the part of `N` prime to `p`.
 This covers orbits without attracting directions: `Dg^L` invertible modulo `p` on
 the cycle. A random polynomial map often has a singular `Dg^L` modulo `p`, and then
 the orbit falls into an attracting cycle, which this method does not treat.
+
+For jump-ahead the flow is not needed: `q -> x_{s + r + N q}` is a power series whose
+`q^m` coefficient has valuation `>= m (e - 1/(p - 1))`, so modulo `p^K` it is the
+polynomial `sum_{j < J} C(q, j) Delta^j x_{s + r}` with `J (e - 1/(p - 1)) >= K`,
+read off the first `J` samples. The flow is built only for return sets.
 """
 
 import math
+from functools import cached_property
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 
+from .arithmetic import factorial_valuation
 from .equilibria import _determinant
 from .events import EventSet, PAdicEvent
 from .flow import PAdicFlow
-from .normal_form import _evaluate, _matmul, _substitute
+from .normal_form import _matmul, _substitute
 from .polynomial import (
     _derivative,
     evaluate_exact,
@@ -84,11 +93,11 @@ class Orbit:
 
     def __init__(self, p: int, precision: int, g, x):
         p, K = int(p), int(precision)
-        g = parse_field(g, p)
-        d = len(g)
+        field = parse_field(g, p)
+        d = len(field)
         e = 2 if p == 2 else 1
         m = p ** (K + e)
-        g = reduce(g, m)
+        g = reduce(field, m)
         x = [int(v) % m for v in np.atleast_1d(np.asarray(x, dtype=object))]
         if len(x) != d:
             raise ValueError(f"`x` must be a point of Z_p^{d}.")
@@ -108,7 +117,10 @@ class Orbit:
             ]
             A = _matmul(jacobian, A, p**e)
         if _determinant(A, p) == 0:
-            raise ValueError("Dg^L is not invertible modulo p on the cycle of `x`.")
+            raise ValueError(
+                "Dg^L is not invertible modulo p on the cycle of `x`: the orbit falls "
+                "into an attracting cycle."
+            )
         order, power = 1, A
         while power != identity:
             power, order = _matmul(power, A, p**e), order + 1
@@ -144,8 +156,7 @@ class Orbit:
 
         self.p, self.precision, self.dimension = p, K, d
         self.tail, self.cycle, self.step = s, L, N
-        digits = min(K, max(1, int(math.log(32) / math.log(p))))
-        self.flow = PAdicFlow.from_time_one(p, K, G, table_digits=digits)
+        self._field, self._start, self._G = field, x, G
         self._g, self._e, self._top, self._centre = g, e, top, c
         self._orbit, self._charts = orbit, charts
         self._u = np.array(
@@ -162,16 +173,63 @@ class Orbit:
             f"{self.dimension}, tail={self.tail}, cycle={self.cycle}, step={self.step})"
         )
 
+    @cached_property
+    def flow(self) -> PAdicFlow:
+        """The flow of `g^N` in the coordinates `u`, built on first use."""
+        digits = min(self.precision, max(1, int(math.log(32) / math.log(self.p))))
+        return PAdicFlow.from_time_one(
+            self.p, self.precision, self._G, table_digits=digits
+        )
+
+    @cached_property
+    def _tables(self) -> np.ndarray:
+        """For every `r < N`, the polynomial in `q` equal to `x_{s + r + N q}` modulo
+        `p^K`: integers of shape `(N, J, d)`, constant term first.
+        """
+        p, K, d, e = self.p, self.precision, self.dimension, self._e
+        s, N = self.tail, self.step
+        J = -(-K * (p - 1) // (e * (p - 1) - 1))
+        work = p ** (K + factorial_valuation(J - 1, p))
+        g = reduce(self._field, work)
+        y = [v % work for v in self._start]
+        samples = []
+        for n in range(s + N * J):
+            if n >= s:
+                samples.append(y)
+            y = [evaluate_exact(f, y, work) for f in g]
+        m = p**K
+        out = np.zeros((N, J, d), dtype=object)
+        for r in range(N):
+            differences = samples[r::N]
+            falling = [1]  # q (q - 1) ... (q - j + 1), constant term first
+            for j in range(J):
+                v = factorial_valuation(j, p)
+                unit = pow(math.factorial(j) // p**v, -1, m)
+                for i in range(d):
+                    if differences[0][i] % p**v:
+                        raise RuntimeError(f"Delta^{j} is not divisible by {j}!.")
+                    b = differences[0][i] // p**v * unit
+                    for k, c in enumerate(falling):
+                        out[r, k, i] = (out[r, k, i] + b * c) % m
+                falling = [0] + falling
+                for k in range(j + 1):
+                    falling[k] = (falling[k] - j * falling[k + 1]) % m
+                differences = [
+                    [b - a for a, b in zip(u, w)]
+                    for u, w in zip(differences, differences[1:])
+                ]
+        return out
+
     def _points(self, rows):
         u = self._u[rows]
         return u[:, 0] if self.dimension == 1 else u
 
     def __call__(self, n):
         """`x_n` modulo `p^K` for integers `n` of any shape; negative `n` when the
-        tail is empty (the inverse on the orbit closure).
+        tail is empty (the inverse on the orbit closure). Large arrays run as
+        `int64` JAX arrays while `p^{2K} < 2^62`.
         """
-        p, K, d, e = self.p, self.precision, self.dimension, self._e
-        s, L, N = self.tail, self.cycle, self.step
+        d, s, N, m = self.dimension, self.tail, self.step, self.p**self.precision
         shape = np.shape(n)
         flat = [int(v) for v in np.asarray(n, dtype=object).reshape(-1)]
         if s and min(flat, default=0) < 0:
@@ -179,21 +237,24 @@ class Orbit:
         out = np.empty((len(flat), d), dtype=object)
         early = np.array([0 <= v < s for v in flat], dtype=bool)
         for k in np.flatnonzero(early):
-            out[k] = self._orbit[flat[k]]
+            out[k] = [v % m for v in self._orbit[flat[k]]]
         late = np.flatnonzero(~early)
         if len(late):
             k = np.array([flat[i] - s for i in late], dtype=object)
-            q, r = k // N, k % N
-            y = self.flow.flow(q % p**K, self._points((r // L).astype(int)))
-            y = np.asarray(np.asarray(y), dtype=object).reshape(-1, d)
-            x = (np.array(self._centre, dtype=object) + p**e * y) % p ** (K + e)
-            j = r % L
-            for t in range(1, L):
-                moving = np.flatnonzero(j >= t)
-                if len(moving):
-                    x[moving] = _evaluate(self._g, x[moving], p ** (K + e))
-            out[late] = x
-        out = (out % p**K).reshape(shape + ((d,) if d > 1 else ()))
+            q, r = k // N % m, (k % N).astype(np.int64)
+            tables = self._tables
+            fast = len(late) > 64 and m < 2**31 and jax.config.jax_enable_x64
+            if fast:
+                tables, q = (
+                    jnp.asarray(tables.astype(np.int64)),
+                    jnp.asarray(q.astype(np.int64)),
+                )
+                r = jnp.asarray(r)
+            total = (jnp if fast else np).zeros((len(late), d), dtype=q.dtype)
+            for j in reversed(range(tables.shape[1])):
+                total = (total * q[:, None] + tables[r, j]) % m
+            out[late] = np.asarray(total).astype(object)
+        out = out.reshape(shape + ((d,) if d > 1 else ()))
         return out[()] if out.ndim == 0 else out
 
     def times(self, event: PAdicEvent) -> EventSet:
@@ -201,7 +262,8 @@ class Orbit:
         event, as an `EventSet` of classes `n = c mod M p^k` valid from `n = tail`
         on, with the earlier hits in `tail`. For a single condition, `zero_bound`
         adds Strassmann's bound over every `r < N` to the hits in the tail: an upper
-        bound on the number of `n >= 0` with `h(x_n) = 0` exactly.
+        bound on the number of `n >= 0` with `h(x_n) = 0` exactly; `classes` splits
+        it over the classes `n = s + r mod N`.
         """
         p, K, d, e = self.p, self.precision, self.dimension, self._e
         s, L, N = self.tail, self.cycle, self.step
@@ -221,7 +283,7 @@ class Orbit:
         while N % p ** (a + 1) == 0:
             a += 1
         M = N // p**a
-        bound, balls = len(tail), []
+        bound, balls, classes = len(tail), [], []
         # x_{s + r + N q} = x_{s + r} mod p^{2e}, so most r are ruled out at once.
         cut = min(depth, 2 * e)
         for j in range(L):
@@ -241,6 +303,7 @@ class Orbit:
                 PAdicEvent(pulled, depth), self._points([r // L for r in rs])
             )
             for r, found in zip(rs, sets):
+                classes.append((s + r, N, found.zero_bound))
                 if bound is not None:
                     bound = (
                         None if found.zero_bound is None else bound + found.zero_bound
@@ -250,7 +313,7 @@ class Orbit:
                     centre = (s + r + N * b.center[0]) % (M * p**level)
                     balls.append(Ball((centre,), level))
         balls = sorted(_merge(balls, p, 1, M), key=lambda b: b.center)
-        return EventSet(balls, p, depth, bound, M, s or None, tail)
+        return EventSet(balls, p, depth, bound, M, s or None, tail, tuple(classes))
 
     def index(self, y) -> int | None:
         """The smallest `n >= 0` with `x_n = y` modulo `p^K`, or `None`."""

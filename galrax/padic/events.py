@@ -51,6 +51,11 @@ class EventSet:
         the period modulo `p` that is prime to `p`.
     - `start`, `tail`: for an orbit that turns periodic only at `n = start`, the
         balls count for `n >= start` only, and `tail` lists the earlier hits.
+    - `classes`: for the return set of an orbit, `(c, N, bound)` for every class
+        `n = c mod N` that may hit, with Strassmann's bound on its exact zeros over
+        all `n = c + N q`, `q` in `Z_p` (`None` as for `zero_bound`). A class whose
+        integers all miss another `EventSet` of the same orbit holds no integer zero:
+        this is how several primes are combined.
     """
 
     balls: list
@@ -60,6 +65,7 @@ class EventSet:
     period: int = 1
     start: int | None = None
     tail: tuple = ()
+    classes: tuple = ()
 
     def __contains__(self, t) -> bool:
         t = int(t)
