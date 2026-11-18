@@ -65,8 +65,8 @@ def _attempt(P, k, u, cap, margin, prec):
     if not (l.imag > 0 and top[0].overlaps(top[1].conjugate())):
         return None
     rho = max((z.abs_upper() for z in rest), default=arb(0))
-    if not l.abs_lower() > rho:
-        return None
+    if not l.abs_lower() > rho or not rho > 0:
+        return None  # rho = 0 (a zero root) would make q = 0 and log q infinite
     V = flint.acb_mat([[z**n for z in roots] for n in range(k)])
     coeffs = V.solve(flint.acb_mat([[v] for v in u])).entries()
     c = coeffs[0] if roots[0] is l else coeffs[1]
@@ -89,6 +89,11 @@ def _attempt(P, k, u, cap, margin, prec):
     if len(own) != d:
         return "precision"
     D = d * (d - 1)
+    # Lambda = 0 has at most one solution only if l / conj l is not a root of unity;
+    # a root of unity of degree <= D has order m with phi(m) <= D, so m <= 2 D^2.
+    z = l / l.conjugate()
+    if any((z**m - 1).contains(0) for m in range(1, 2 * D * D + 1)):
+        return None
     disc = abs(int(P.discriminant()))  # disc / P'(l) is an algebraic integer, so is disc c
     h_l = 2 * _height_bound([roots[i] for i in own], d)  # h(l / conj l) <= 2 h(l)
     h_c = 2 * (_height_bound([coeffs[i] * disc for i in own], d) + arb(disc).log())
@@ -96,10 +101,10 @@ def _attempt(P, k, u, cap, margin, prec):
     A_j = [max(h.upper(), (abs(g) / D).upper(), arb(0.16) / D)
            for h, g in zip((h_l, h_c, arb(0)), logs)]
     e = arb(1).exp()
-    # |b_3| = |2m - 1| <= 2n + 3, from |Lambda| <= 1 and |Log a| <= pi
+    # |b_3| = |2m - 1| <= 2n + 3 + |Lambda| / pi <= 2n + 3 + 2 A, as |Lambda| <= 2 pi A q^n
     def matveev(n):  # a lower bound for log |Lambda| at time n
         return (-margin * arb(2) ** 38 * arb(D) ** 5 * A_j[0] * A_j[1] * A_j[2]
-                * (e * D).log() * (e * (2 * n + 3)).log())
+                * (e * D).log() * (e * (2 * n + 3 + 2 * A)).log())
 
     def possible(n):  # can |Lambda| <= 2 pi A q^n hold?
         return not (matveev(n) > (2 * arb.pi() * A).log() + n * q.log())

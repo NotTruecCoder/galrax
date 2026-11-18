@@ -42,9 +42,15 @@ def test_branches_without_an_etale_prime():
 
 
 def test_real_place_agrees_with_exact_orbit():
+    how, zeros, period = henon_real(1, [0, 0, 0], (0, 1), 0)  # (0, 1) <-> (1, 0)
+    assert (how, zeros, period) == ("periodic", [0], 2)  # x_n = 0 at every even n
     for case in henon_cases(40, random.Random(1)):
         _, c, P, start, target = case
-        how, zeros = henon_real(c, P, start, target)
+        how, zeros, period = henon_real(c, P, start, target)
+        if how == "periodic":  # every hit recurs with the period
+            hits = exact_hits(c, P, start, target, 2 * period)[0]
+            assert hits == [z + k * period for k in range(-3, 3) for z in zeros
+                            if abs(z + k * period) <= 2 * period]
         if how == "escape":
             near = exact_hits(c, P, start, target, 12)[0]
             assert [n for n in zeros if abs(n) <= 12] == near
@@ -91,7 +97,7 @@ def test_dominant_roots_bound_the_zeros():
 
     assert dominant((1, 1), (0, 1)) == 1  # Fibonacci: the zero n = 0 only
     assert dominant((0, -1), (1, 0)) is None and complex_pair((0, -1), (1, 0)) is None  # i^n
-    # (x - 1)(x^2 - 2x + 5) from (1, 2, 3): Lambda = 0 is possible in Q(i), so no bound
+    # (x - 1)(x^2 - 2x + 5) from (1, 2, 3): the reduction gives no bound here
     assert complex_pair((3, -7, 5), (1, 2, 3)) is None
     rng, bounds = random.Random(3), {"real": 0, "pair": 0}
     while min(bounds.values()) < 5:

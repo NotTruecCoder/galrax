@@ -248,7 +248,7 @@ All runs use 12 processes on a laptop, with 30 s per instance (60 s for Hénon).
 | recurrences, order 7–10 | 80 | 0 | 80 | 37 / 0 | – / 0.07 s | real place 80 |
 | quadratic, $d = 2$ | 100 | 82 | 97 | 9 / 3 | 5.1 s / 0.6 s | nilpotent 42, mixed 37, étale modulo $p^k$ 15, Strassmann 3 |
 | quadratic, $d = 3$ | 100 | 1 | 93 | 96 / 7 | 30 s / 2.8 s | mixed 55, nilpotent 25, étale modulo $p^k$ 13 |
-| Hénon | 200 | 131 | 200 | 69 / 0 | 21 s / < 1 ms | real place 200 |
+| Hénon | 200 | 131 | 200 | 69 / 0 | 21 s / < 1 ms | real place 200 (1 periodic, reported as its zeros on one period and the period) |
 | **all** | **580** | **290** | **570** | 233 / 10 | | |
 
 In "settled by", a recurrence counts once for each kind of record that settles one of its two sides.
@@ -265,9 +265,24 @@ The sieve's counts depend on load. It ran alongside ABS, so the Hénon count is 
 | + dominant root | 149 | 19 | 1.2 s |
 | + dominant complex pair (Baker–Davenport) | **180** | 0 | 0.02 s |
 
-On 900 other instances (100 per order, seed 1) ABS certifies 899, in 0.03 s on average; one of order 9 times out. Every certified zero set was checked again, independently, against the exact zeros up to $|n| = N + 2000$, $N$ the larger of the two real-place bounds (up to 76,509): no difference.
+On 900 other instances (100 per order, seed 1) ABS certifies 899; one of order 9 times out. Every certified zero set was checked again, independently, against the exact zeros up to $|n| = N + 2000$, $N$ the larger of the two real-place bounds (up to 76,509): no difference.
 
-This is not yet a win over SKOLEM: the gain comes from Baker–Davenport, which SKOLEM has too, and its published 51% may be for another of its algorithms. The two have to be run on the same instances and machine; that run is not made here.
+**Against SKOLEM on the same instances.** SKOLEM (skolem-solver at commit `9379db1`, SageMath 10.7 under WSL2) ran with each of its two algorithms, Baker–Davenport over $\mathbb{Z}$ (`-B -bi`) and Leapfrogging (`-L`); ABS ran on Windows. Both used 4 processes on the same laptop, 30 s per instance, and the time is that of the computation in a running process, without start-up:
+
+| order | ABS | SKOLEM `-B -bi` | SKOLEM `-L` |
+|---|---|---|---|
+| 2 | 100 (0.07 s) | 93 (0.30 s) | 93 (0.20 s) |
+| 3 | 100 (0.01 s) | 99 (0.39 s) | 99 (0.29 s) |
+| 4 | 100 (0.02 s) | 100 (0.41 s) | 99 (0.29 s) |
+| 5 | 100 (0.03 s) | 100 (0.45 s) | 77 (3.3 s) |
+| 6 | 100 (0.06 s) | 100 (0.49 s) | 32 (5.2 s) |
+| 7 | 100 (0.12 s) | 99 (0.72 s) | 3 (8.8 s) |
+| 8 | 100 (0.22 s) | 100 (0.69 s) | 1 (1.1 s) |
+| 9 | 99 (0.28 s) | 99 (0.95 s) | 0 |
+| 10 | 100 (0.51 s) | 100 (1.13 s) | 0 |
+| **all** | **899 (0.15 s)** | **890 (0.62 s)** | **404 (1.3 s)** |
+
+Certified instances out of 100 per order, with the mean time of those. SKOLEM's ten misses with `-B` are nine degenerate recurrences, which it rejects, and one timeout; ABS certifies those nine, whose zero sets are finite. Leapfrogging certifies 45%, close to the 51% of its paper, so that figure is for `-L`. On the 180 instances of seed 0 the counts are 180, 179 and 83. No tool gave a wrong zero set. The margin of ABS is thus small in coverage (the degenerate cases) and a factor 2–20 in time, larger at low order; both tools rest on the same Baker–Davenport argument for recurrences, and ABS's own contribution is for the maps where no such argument exists.
 
 ### Speed
 

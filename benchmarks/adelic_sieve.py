@@ -243,9 +243,13 @@ def recurrence_cases(per_order, rng, dataset=None):
 
         with open(dataset) as f:
             data = [ast.literal_eval(line) for line in f if line.strip()]
-        return [("recurrence", k, tuple(r), tuple(u))
-                for k in range(2, 11)
-                for _, r, u in rng.sample([c for c in data if c[0] == k], per_order)]
+        cases = []
+        for k in range(2, 11):  # the draw of skolem.py, then drop r_{k-1} = 0 or u = 0
+            of_order = [c for c in data if c[0] == k]
+            cases += [("recurrence", k, tuple(r), tuple(u))
+                      for _, r, u in rng.sample(of_order, min(per_order, len(of_order)))
+                      if r[-1] and any(u)]
+        return cases
     cases = []
     for k in range(2, 11):
         while sum(1 for c in cases if c[1] == k) < per_order:
@@ -339,10 +343,12 @@ def map_zeros(step, x0, target, window, exact_bits=1 << 22):
 
 
 def henon_real(c, P, start, target, cap=10**6):
-    """`(how, zeros)` by the filtration: every `n` in `Z` with `x_n = target` when
-    `how` is `"escape"`; for `"periodic"` the orbit is a cycle and `zeros` the hits
-    on one period.
+    """`(how, zeros, period)` by the filtration: every `n` in `Z` with `x_n = target`
+    when `how` is `"escape"` (`period` is `None`); for `"periodic"` the orbit is a
+    cycle of length `period` and the zero set is `zeros + period Z`, `zeros` the hits
+    on `0 <= n < period`.
     """
+    assert c in (1, -1), c  # invertible over Z: the backward step divides by c
     R = abs(P[0]) + abs(P[1]) + 3
 
     def poly(y):
@@ -351,7 +357,7 @@ def henon_real(c, P, start, target, cap=10**6):
     zeros, seen, (x, y), n = [], set(), start, 0
     for _ in range(cap):
         if (x, y) in seen:
-            return "periodic", sorted(zeros)
+            return "periodic", sorted(zeros), n  # the map is invertible: back to the start
         seen.add((x, y))
         if x == target:
             zeros.append(n)
@@ -363,7 +369,7 @@ def henon_real(c, P, start, target, cap=10**6):
     (x, y), n = start, 0
     for _ in range(cap):
         if abs(x) >= max(abs(y), R) and abs(x) > abs(target):
-            return "escape", sorted(zeros)  # |x_{m-1}| >= 2 |x_m| from here on
+            return "escape", sorted(zeros), None  # |x_{m-1}| >= 2 |x_m| from here on
         x, y, n = c * (y - poly(x)), x, n - 1
         if x == target:
             zeros.append(n)
@@ -527,12 +533,13 @@ def solve(case, mode, primes=8, depth_below=50):
     result = {"group": group(case), "mode": mode, "certified": False, "primes": []}
     if mode == "abs" and case[0] == "henon":
         _, c, P, start, target = case
-        how, zeros = henon_real(c, P, start, target)
+        how, zeros, period = henon_real(c, P, start, target)
         if how == "escape":
             near = exact_hits(c, P, start, target, 12)[0]
             assert [n for n in zeros if abs(n) <= 12] == near, case
+        # periodic: the zero set is zeros + period Z, carried by `period`
         return result | {"certified": True, "by": f"real ({how})", "zeros": zeros,
-                         "seconds": time.perf_counter() - began}
+                         "period": period, "seconds": time.perf_counter() - began}
     F, step, x0, target, zeros_in, window, back = instance(case)
     invertible = case[0] != "quadratic"
     records, zeros, seen, etale, queue = [], None, None, 0, None
