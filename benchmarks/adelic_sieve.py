@@ -4,8 +4,9 @@
 since that file is not shipped), (2) orbits of random quadratic maps of `Z^2` and
 `Z^3` (the generator of `paper/checks/dml_etale_primes.py` with its seeds, so the
 6 + 4 orbits with no etale prime are among them), (3) the generalised Henon maps of
-`benchmarks/nonlinear_skolem.py`. The question is the set of `n >= 0` with
-`x_n = target`, `x` the first coordinate.
+`benchmarks/nonlinear_skolem.py`. The question is the set of `n` with
+`x_n = target`, `x` the first coordinate: `n` in `Z` for the invertible orbits (1)
+and (3), `n >= 0` for (2).
 
 Branches at a prime `p`, by the Jacobian `A` of `g^L` on the cycle of the orbit mod p:
 
@@ -22,7 +23,15 @@ Branches at a prime `p`, by the Jacobian `A` of `g^L` on the cycle of the orbit 
   holds for any branch; the branch theory only says when it succeeds.
 - the real place, for Henon maps: outside the square of side `R = |a_0| + |a_1| + 3`
   the orbit escapes with `|x_n|` at least doubling (forward when `|y| >= |x|`,
-  backward when `|x| >= |y|`), so an exact walk both ways decides the instance.
+  backward when `|x| >= |y|`), so an exact walk both ways decides the instance. For
+  recurrences: if `theta + sum_i |r_i| theta^-i <= |r_0|`, the cone
+  `|u_{m+1}| >= theta |u_m|` is invariant and `u` has no zero once inside it.
+
+For recurrences and Henon maps the zero set is certified over `Z`. The time `-n` of
+a recurrence is the integer recurrence `s_m = R^m u_{-m}`, `R = r_{k-1}`
+(`reversed_recurrence`): records at primes where the map is invertible modulo `p`
+hold both ways (reflected for `n < 0`); the others, and the real place, hold on one
+side, and each side is settled on its own.
 
 Primes are combined as in the etale sieve: a class of one prime that meets no class
 of another holds no zero `n >= max T`. Zeros below that are found exactly: in
@@ -39,6 +48,7 @@ import math
 import multiprocessing as mp
 import random
 import time
+from fractions import Fraction
 from itertools import combinations_with_replacement
 
 from nonlinear_skolem import exact_hits, orbit as henon_orbit
@@ -141,9 +151,11 @@ def branch(F, step, x0, p, cap=5000):
     return ("nilpotent" if not any(map(any, power)) else "mixed"), p * len(orbit)
 
 
-def depth_record(step, x0, target, p, kind, cap=20000, top=12):
+def depth_record(step, x0, target, p, kind, sides, cap=20000, top=12):
     """The orbit modulo `p^k` for `k = 1, 2, ...` until no point of its cycle hits
-    the target or the cycle passes `cap` points: the deepest record.
+    the target or the cycle passes `cap` points: the deepest record. `sides` is
+    `"both"` at a prime where the map is invertible modulo `p` (the cycle is pure and
+    runs backwards too), else `"forward"`: the cover holds for `n >= T` only.
     """
     best = None
     for k in range(1, top + 1):
@@ -155,7 +167,7 @@ def depth_record(step, x0, target, p, kind, cap=20000, top=12):
         P = len(orbit) - T
         hits = sorted({n % P for n in range(T, len(orbit)) if (orbit[n][0] - target) % m == 0})
         best = {"p": p, "k": k, "type": kind, "T": T, "cover": [(c, P) for c in hits],
-                "counted": [(c, P, None) for c in hits]}
+                "counted": [(c, P, None) for c in hits], "sides": sides}
         if not hits:
             break
     return best
@@ -173,7 +185,15 @@ def etale_record(F, x0, target, p):
         for b in event.balls
     ]
     return {"p": p, "type": "etale", "T": orbit.tail, "cover": cover,
-            "counted": list(event.classes)}
+            "counted": list(event.classes), "sides": "both"}
+
+
+def reflect(record):
+    """A two-sided record in the time `-n`."""
+    return record | {
+        "cover": [(-c % N, N) for c, N in record["cover"]],
+        "counted": [(-c, N, b) for c, N, b in record["counted"]],
+    }
 
 
 def verdict(records, zeros, window):
@@ -338,26 +358,83 @@ def henon_real(c, P, start, target, cap=10**6):
     raise RuntimeError("no escape")
 
 
+def reversed_recurrence(r, u):
+    """`(r', s)` with `s_m = R^m u_{-m}`, `R = r_{k-1}`: an integer recurrence
+    `s_m = r'_0 s_{m-1} + ... + r'_{k-1} s_{m-k}` whose zeros are those of `u` at
+    `n = -m`. From `R u_{n-k} = u_n - r_0 u_{n-1} - ... - r_{k-2} u_{n-k+1}`, times
+    `R^{m+k-1}`: `r'_j = -r_{k-2-j} R^j` for `j < k - 1` and `r'_{k-1} = R^{k-1}`.
+    """
+    k, R = len(r), r[-1]
+    back = [-r[k - 2 - j] * R**j for j in range(k - 1)] + [R ** (k - 1)]
+    v = [Fraction(x) for x in u]  # u_{1-k}, ..., u_0 at the end, built backwards
+    for _ in range(k - 1):
+        v.insert(0, (v[k - 1] - sum(a * v[k - 2 - i] for i, a in enumerate(r[:-1]))) / R)
+    s = [R**m * v[k - 1 - m] for m in range(k)]  # s_0 = u_0, ..., s_{k-1}
+    assert all(x.denominator == 1 for x in s)
+    return tuple(back), tuple(int(x) for x in s)
+
+
+def cone(r, grid=400):
+    """The least `theta` on a grid with `theta + sum_i |r_i| theta^-i <= |r_0|`
+    (`i >= 1`), or `None`. Then the cone `|u_{m+1}| >= theta |u_m|` along a state is
+    invariant: `|u_{n+1}| >= |r_0| |u_n| - sum_i |r_i| |u_{n-i}| >= theta |u_n|`, so
+    `u` never vanishes again once the orbit enters it with `u_n != 0`.
+    """
+    a = abs(r[0])
+    if not a:
+        return None
+    for j in range(1, grid + 1):
+        theta = Fraction(a * j, grid)
+        if theta + sum(abs(c) / theta ** (i + 1) for i, c in enumerate(r[1:])) <= a:
+            return theta
+    return None
+
+
+def real_record(r, u, sides, steps=300):
+    """The real place for a recurrence: `T` such that `u_n != 0` for every `n > T`,
+    as a record with an empty cover, or `None` if the orbit does not enter the cone
+    within `steps`.
+    """
+    theta = cone(r)
+    if theta is None:
+        return None
+    x = list(u)
+    for n in range(len(u) - 1, steps):
+        if x[-1] and all(abs(b) >= theta * abs(a) for a, b in zip(x[-len(u):], x[-len(u) + 1:])):
+            return {"p": None, "type": "real", "T": n, "cover": [], "counted": [], "sides": sides}
+        x.append(sum(a * b for a, b in zip(r, reversed(x[-len(u):]))))
+    return None
+
+
+def recurrence_map(r):
+    from galrax.padic import companion
+
+    def step(x, m=None):  # u_n = r_0 u_{n-1} + ... + r_{k-1} u_{n-k}
+        head = sum(a * b for a, b in zip(r, reversed(x)))
+        return x[1:] + ((head % m if m else head),)
+
+    return companion(list(reversed(r))), step
+
+
 def instance(case):
-    """`(F, step, x0, target, zeros(window), window)` of a case."""
+    """`(F, step, x0, target, zeros(window), window, back)` of a case; `back` is the
+    `(F, step, x0)` of the orbit in the time `-n` when it is an integer orbit with
+    singular primes (recurrences), else `None`.
+    """
     if case[0] == "recurrence":
-        from galrax.padic import companion
-
         _, k, r, u = case
-        F = companion(list(reversed(r)))
-
-        def step(x, m=None):  # u_n = r_0 u_{n-1} + ... + r_{k-1} u_{n-k}
-            head = sum(a * b for a, b in zip(r, reversed(x)))
-            return x[1:] + ((head % m if m else head),)
-
-        return F, step, u, 0, lambda w: exact_zeros(list(r), list(u), w), 200
+        F, step = recurrence_map(r)
+        rb, s = reversed_recurrence(r, u)
+        back = (*recurrence_map(rb), s)
+        return F, step, u, 0, lambda w: exact_zeros(list(r), list(u), w), 200, back
     if case[0] == "quadratic":
         _, d, _, F, x0, target = case
         step = stepper(F)
-        return F, step, x0, target, lambda w: map_zeros(step, x0, target, w), 120
+        return F, step, x0, target, lambda w: map_zeros(step, x0, target, w), 120, None
     _, c, P, start, target = case
     F = [{(0, 1): 1}, {(1, 0): c, **{(0, i): a for i, a in enumerate(P) if a}}]
-    return F, stepper(F), start, target, lambda w: exact_hits(c, P, start, target, w)[0], 14
+    zeros = lambda w: exact_hits(c, P, start, target, w)[0]  # noqa: E731
+    return F, stepper(F), start, target, zeros, 14, None
 
 
 def group(case):
@@ -368,7 +445,23 @@ def group(case):
     return "henon"
 
 
+def settle(records, zeros, need, invertible):
+    """The types of the records that settle `n >= 0` and, on an invertible orbit,
+    `n < 0` (the reflected two-sided records with the backward ones), or `None`.
+    """
+    forward = verdict([r for r in records if r["sides"] != "backward"], zeros, need)
+    if forward is None or not invertible:
+        return forward and forward["type"]
+    mirror = [reflect(r) if r["sides"] == "both" else r for r in records if r["sides"] != "forward"]
+    backward = verdict(mirror, [-n for n in zeros], need)
+    return backward and f"{forward['type']} / {backward['type']}"
+
+
 def solve(case, mode, primes=8, depth_below=50):
+    """`mode`: `"sieve"` (Strassmann at etale primes) or `"abs"`. The zero set is
+    certified over `Z` for invertible orbits (recurrences, Henon maps), over `n >= 0`
+    for quadratic maps.
+    """
     import jax
 
     jax.config.update("jax_enable_x64", True)
@@ -382,15 +475,13 @@ def solve(case, mode, primes=8, depth_below=50):
             assert [n for n in zeros if abs(n) <= 12] == near, case
         return result | {"certified": True, "by": f"real ({how})", "zeros": zeros,
                          "seconds": time.perf_counter() - began}
-    F, step, x0, target, zeros_in, window = instance(case)
-    types = {p: b for p in PRIMES if (b := branch(F, step, x0, p)) is not None}
-    # cheapest first; ABS adds the singular branches, and p = 2 (Orbit.times skips it)
-    queue = [
-        (c, p, t) for p, (t, c) in types.items()
-        if (t == "etale" and p > 2) or (mode == "abs" and p < depth_below and (t != "etale" or p == 2))
-    ]
-    queue.sort()
-    records, zeros, seen, etale = [], None, None, 0
+    F, step, x0, target, zeros_in, window, back = instance(case)
+    invertible = case[0] != "quadratic"
+    records, zeros, seen, etale, queue = [], None, None, 0, None
+    if mode == "abs" and case[0] == "recurrence":  # the real place, both ways
+        rb, s = reversed_recurrence(case[2], case[3])
+        pair = real_record(case[2], case[3], "forward"), real_record(rb, s, "backward")
+        records += [rec for rec in pair if rec]
     while True:
         need = max([window] + [r["T"] for r in records])
         if need != seen:
@@ -399,22 +490,45 @@ def solve(case, mode, primes=8, depth_below=50):
             result["error"] = "hit too far for integers"
             break
         for r in records:
-            assert sound(r, zeros), (case, r["p"], r["type"])
-        main = verdict(records, zeros, need)
-        if main is not None:
-            result |= {"certified": True, "by": main["type"], "zeros": zeros}
+            side = [-n for n in zeros] if r["sides"] == "backward" else zeros
+            assert sound(r, side), (case, r["p"], r["type"])
+        by = settle(records, zeros, need, invertible)
+        if by is not None:
+            result |= {"certified": True, "by": by, "zeros": zeros}
             break
-        while queue and queue[0][2] == "etale" and queue[0][1] > 2 and etale == primes:
-            queue.pop(0)  # no more Strassmann primes
+        if queue is None:
+            types = {p: b for p in PRIMES if (b := branch(F, step, x0, p)) is not None}
+            # Cheapest first. ABS adds the orbit modulo p^k: forward (and, for `back`,
+            # backward) at the singular primes, both ways at the etale ones, where it costs
+            # far less than Orbit.times and gives the same exclusions; p = 2 has only this.
+            queue = []
+            for p, (t, c) in types.items():
+                if t == "etale" and p > 2:
+                    queue.append((c, 1, p, "orbit"))
+                if mode == "abs" and p < depth_below:
+                    queue.append((c, 0, p, "depth"))
+                    if t != "etale" and back is not None:
+                        queue.append((c, 0, p, "depth back"))
+            queue.sort()
+        queue = [q for q in queue if q[3] != "orbit" or etale < primes]
         if not queue:
             break
-        _, p, t = queue.pop(0)
-        if t == "etale" and p > 2:
+        _, _, p, how = queue.pop(0)
+        t = types[p][0]
+        if how == "orbit":
             records.append(etale_record(F, x0, target, p))
             etale += 1
-        elif (rec := depth_record(step, x0, target, p, t if p > 2 or t != "etale" else "etale mod 2^k")):
-            records.append(rec)
-    result["primes"] = [r["p"] for r in records]
+        elif how == "depth":
+            sides = "both" if t == "etale" else "forward"
+            kind = t if t != "etale" else "etale mod p^k"
+            if rec := depth_record(step, x0, target, p, kind, sides):
+                records.append(rec)
+        else:
+            Fb, stepb, s = back
+            tb = (branch(Fb, stepb, s, p) or ("mixed",))[0]
+            if rec := depth_record(stepb, s, target, p, tb, "backward"):
+                records.append(rec)
+    result["primes"] = sorted({r["p"] for r in records if r["p"]})
     return result | {"seconds": time.perf_counter() - began}
 
 
@@ -447,12 +561,12 @@ def report(results):
     pairs = {}
     for r in results:
         if r.get("certified"):
-            pairs.setdefault(key(r)[2], {})[key(r)[1]] = [n for n in r["zeros"] if n >= 0]
+            pairs.setdefault(key(r)[2], {})[key(r)[1]] = r["zeros"]
     clash = [k for k, v in pairs.items() if len(v) == 2 and v["sieve"] != v["abs"]]
     gained = sum(1 for v in pairs.values() if list(v) == ["abs"])
     lost = sum(1 for v in pairs.values() if list(v) == ["sieve"])
     print(f"\ncertified by ABS only: {gained}; by the sieve only: {lost}; "
-          f"both, with different zeros n >= 0: {len(clash)}")
+          f"both, with different zeros: {len(clash)}")
     for r in [r for r in results if "error" in r][:5]:
         print(r)
 

@@ -100,6 +100,22 @@ def solve(case, window=14, primes=8):
     return result | {"seconds": time.perf_counter() - began}
 
 
+def make_cases(count, seed):
+    """`(kind, c, P, start, target)` for `count` random orbits; half the targets are
+    values of the orbit.
+    """
+    rng = random.Random(seed)
+    cases = []
+    for _ in range(count):
+        P = [rng.randint(-5, 5), rng.randint(-5, 5), rng.choice([-3, -2, -1, 1, 2, 3])]
+        start, c = (rng.randint(-5, 5), rng.randint(-5, 5)), rng.choice([1, -1])
+        target, kind = rng.randint(-20, 20), "random"
+        if rng.random() < 0.5:
+            target, kind = orbit(c, P, start, 3)[rng.randint(-3, 3)][0], "orbit value"
+        cases.append((kind, c, P, start, target))
+    return cases
+
+
 def main():
     import skolem
 
@@ -110,15 +126,7 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
-    rng = random.Random(args.seed)
-    cases = []
-    for _ in range(args.count):
-        P = [rng.randint(-5, 5), rng.randint(-5, 5), rng.choice([-3, -2, -1, 1, 2, 3])]
-        start, c = (rng.randint(-5, 5), rng.randint(-5, 5)), rng.choice([1, -1])
-        target, kind = rng.randint(-20, 20), "random"
-        if rng.random() < 0.5:  # half the targets are values of the orbit
-            target, kind = orbit(c, P, start, 3)[rng.randint(-3, 3)][0], "orbit value"
-        cases.append((kind, c, P, start, target))
+    cases = make_cases(args.count, args.seed)
     results = run(cases, args.timeout, args.processes or skolem.mp.cpu_count(), solve)
 
     print(

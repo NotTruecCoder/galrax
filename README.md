@@ -222,7 +222,40 @@ A larger limit lets in primes too expensive to finish within 60 s. Choosing prim
 
 The periodic orbit is solved directly. Of the other 199, 135 are certified: for 63 the list of zeros is complete, and for 72 the target is never reached at any $n \in \mathbb{Z}$. With the fixed primes $3, 5, 7, 11$ the count was 123. No orbit finished without a certificate: every one that finished in time was settled.
 
-These instances have a much simpler archimedean solution. Outside a bounded square the forward orbit of a Hénon map escapes with $|x_n|$ increasing, and so does the backward orbit (the filtration of Bedford–Smillie and Friedland–Milnor). An exact integer computation therefore decides each instance after an explicit number of steps, either reaching a cycle or leaving the square, and would settle all 200 orbits, the 64 timeouts included, almost instantly. The benchmark is thus a test of the $p$-adic certificate on problems whose answer is known by other means, not a case where it is the only method. The certificate itself uses no archimedean information, so it also applies where no such filtration exists, for example to orbits in $\mathbb{Z}_p^2$.
+These instances have a much simpler archimedean solution. Outside a bounded square the forward orbit of a Hénon map escapes with $|x_n|$ increasing, and so does the backward orbit (the filtration of Bedford–Smillie and Friedland–Milnor). An exact integer computation therefore decides each instance after an explicit number of steps, either reaching a cycle or leaving the square: `benchmarks/henon_escape.py`, with the square $|x|, |y| < |a_1| + |a_0| + 3$, settles all 200 orbits, the 64 timeouts included, in 5.5 ms (1 periodic, 107 with zeros, 92 never reached), in agreement with the exact zeros for $|n| \le 14$. The benchmark is thus a test of the $p$-adic certificate on problems whose answer is known by other means, not a case where it is the only method. The certificate itself uses no archimedean information, so it also applies where no such filtration exists, for example to orbits in $\mathbb{Z}_p^2$.
+
+**Adelic sieve by branch type** (`benchmarks/adelic_sieve.py`). The sieve above needs an étale prime, one where $Dg^L$ is invertible modulo $p$ on the cycle. ABS uses every place:
+
+- At an étale prime it uses Strassmann's bound, as above.
+- At a singular prime (nilpotent or mixed in the Fitting decomposition) it reads the exact orbit modulo $p^k$, $k = 1, 2, \ldots$: a tail $T$ and a cycle. When no point of the cycle hits the target, every zero lies below $T$. On a nilpotent branch the orbit tends to an attracting cycle, so this happens once $k$ exceeds the valuation of the target there. The bound comes from the computed cycle, so it holds on any branch without constants.
+- The same cycle is computed at étale primes $p < 50$. There it gives the exclusions of `Orbit.times` at a fraction of the cost.
+- At the real place: the filtration for Hénon maps. For recurrences, an invariant cone $|u_{m+1}| \ge \theta |u_m|$, which exists when $\theta + \sum_{i \ge 1} |r_i| \theta^{-i} \le |r_0|$; $u$ never vanishes inside it.
+
+For $n < 0$, a recurrence is run as the integer recurrence $s_m = r_{k-1}^m u_{-m}$. Records at primes where the map is invertible modulo $p$ hold both ways. The others, and the real place, hold on one side, and each side is settled on its own. Zero sets are certified over $\mathbb{Z}$ for recurrences and Hénon maps, and for $n \ge 0$ for quadratic maps, which are not invertible.
+
+The data:
+
+- Recurrences: 20 per order 2–10, drawn from the distribution of the SKOLEM data set (entries in $[-20, 20]$).
+- Random quadratic maps of $\mathbb{Z}^2$ and $\mathbb{Z}^3$: 100 each, from the generator of the étale-prime survey, including the 6 and 4 orbits with no étale prime below 200 and 100.
+- The 200 Hénon orbits above.
+
+All runs use 12 processes on a laptop, with 30 s per instance (60 s for Hénon). Up to eight Strassmann primes are used, as above. Every instance certified by both methods has the same zeros; no instance is certified by the sieve alone.
+
+| data | instances | sieve: certified | ABS: certified | timed out, sieve / ABS | mean time of certified, sieve / ABS | ABS settled by |
+|---|---|---|---|---|---|---|
+| recurrences, order 2–4 | 60 | 60 | 60 | 0 / 0 | 3.1 s / 1.3 s | real place on a side 45, étale modulo $p^k$ 25, mixed 19 |
+| recurrences, order 5–6 | 40 | 13 | 35 | 26 / 5 | 18 s / 4.4 s | real place on a side 28, mixed 30, étale modulo $p^k$ 5, Strassmann 2 |
+| recurrences, order 7–10 | 80 | 0 | 30 | 45 / 28 | – / 1.9 s | real place on a side 29, mixed 22, étale modulo $p^k$ 1 |
+| quadratic, $d = 2$ | 100 | 82 | 97 | 9 / 3 | 5.1 s / 0.6 s | nilpotent 42, mixed 37, étale modulo $p^k$ 15, Strassmann 3 |
+| quadratic, $d = 3$ | 100 | 1 | 93 | 96 / 7 | 30 s / 2.8 s | mixed 55, nilpotent 25, étale modulo $p^k$ 13 |
+| Hénon | 200 | 131 | 200 | 69 / 0 | 21 s / < 1 ms | real place 200 |
+| **all** | **580** | **287** | **515** | 245 / 43 | | |
+
+In "settled by", a recurrence counts once for each kind of record that settles one of its two sides.
+
+On quadratic maps of $\mathbb{Z}^3$ the sieve fails: a cycle of length $L$ is étale with probability about $(1 - 1/p)^L$, and most cycles are mixed. Those mixed cycles are what ABS uses. The ten orbits with no étale prime are all certified, in 0.2 s and 1.7 s on average for $d = 2$ and $d = 3$. For recurrences the real place settles one side in most instances. From order 7 on, the instances left are those where the cone is not reached and the cycles modulo small primes exceed the limits.
+
+The sieve's counts depend on load. It ran alongside ABS, so the Hénon count is 131 here against 135 alone at the same timeout. A comparison with SKOLEM needs both tools run on the same data set on better hardware: SKOLEM's published times come from a 16-thread server, and it is not made here.
 
 ### Speed
 
