@@ -229,7 +229,7 @@ These instances have a much simpler archimedean solution. Outside a bounded squa
 - At an étale prime it uses Strassmann's bound, as above.
 - At a singular prime (nilpotent or mixed in the Fitting decomposition) it reads the exact orbit modulo $p^k$, $k = 1, 2, \ldots$: a tail $T$ and a cycle. When no point of the cycle hits the target, every zero lies below $T$. On a nilpotent branch the orbit tends to an attracting cycle, so this happens once $k$ exceeds the valuation of the target there. The bound comes from the computed cycle, so it holds on any branch without constants.
 - The same cycle is computed at étale primes $p < 50$. There it gives the exclusions of `Orbit.times` at a fraction of the cost.
-- At the real place: the filtration for Hénon maps. For recurrences, an invariant cone $|u_{m+1}| \ge \theta |u_m|$, which exists when $\theta + \sum_{i \ge 1} |r_i| \theta^{-i} \le |r_0|$; $u$ never vanishes inside it.
+- At the real place: the filtration for Hénon maps. For recurrences, in ball arithmetic (Arb, through `python-flint`): a dominant root $\lambda$ with $u_n = c\lambda^n + \ldots$, $c \ne 0$, gives an explicit $N$ past which $u_n \ne 0$; a dominant complex pair gives one through Matveev's bound and the Baker–Davenport reduction (`benchmarks/baker.py`, with Matveev's constant raised $10^6$ times as a margin, which moves the final bound only through $\log N_0$). Failing both, an invariant cone $|u_{m+1}| \ge \theta |u_m|$, which exists when $\theta + \sum_{i \ge 1} |r_i| \theta^{-i} \le |r_0|$; $u$ never vanishes inside it.
 
 For $n < 0$, a recurrence is run as the integer recurrence $s_m = r_{k-1}^m u_{-m}$. Records at primes where the map is invertible modulo $p$ hold both ways. The others, and the real place, hold on one side, and each side is settled on its own. Zero sets are certified over $\mathbb{Z}$ for recurrences and Hénon maps, and for $n \ge 0$ for quadratic maps, which are not invertible.
 
@@ -243,19 +243,31 @@ All runs use 12 processes on a laptop, with 30 s per instance (60 s for Hénon).
 
 | data | instances | sieve: certified | ABS: certified | timed out, sieve / ABS | mean time of certified, sieve / ABS | ABS settled by |
 |---|---|---|---|---|---|---|
-| recurrences, order 2–4 | 60 | 60 | 60 | 0 / 0 | 3.1 s / 1.3 s | real place on a side 45, étale modulo $p^k$ 25, mixed 19 |
-| recurrences, order 5–6 | 40 | 13 | 35 | 26 / 5 | 18 s / 4.4 s | real place on a side 28, mixed 30, étale modulo $p^k$ 5, Strassmann 2 |
-| recurrences, order 7–10 | 80 | 0 | 30 | 45 / 28 | – / 1.9 s | real place on a side 29, mixed 22, étale modulo $p^k$ 1 |
+| recurrences, order 2–4 | 60 | 60 | 60 | 0 / 0 | 2.3 s / 0.03 s | real place on a side 58, étale modulo $p^k$ 3 |
+| recurrences, order 5–6 | 40 | 16 | 40 | 22 / 0 | 13 s / 0.09 s | real place 40 |
+| recurrences, order 7–10 | 80 | 0 | 80 | 37 / 0 | – / 0.07 s | real place 80 |
 | quadratic, $d = 2$ | 100 | 82 | 97 | 9 / 3 | 5.1 s / 0.6 s | nilpotent 42, mixed 37, étale modulo $p^k$ 15, Strassmann 3 |
 | quadratic, $d = 3$ | 100 | 1 | 93 | 96 / 7 | 30 s / 2.8 s | mixed 55, nilpotent 25, étale modulo $p^k$ 13 |
 | Hénon | 200 | 131 | 200 | 69 / 0 | 21 s / < 1 ms | real place 200 |
-| **all** | **580** | **287** | **515** | 245 / 43 | | |
+| **all** | **580** | **290** | **570** | 233 / 10 | | |
 
 In "settled by", a recurrence counts once for each kind of record that settles one of its two sides.
 
-On quadratic maps of $\mathbb{Z}^3$ the sieve fails: a cycle of length $L$ is étale with probability about $(1 - 1/p)^L$, and most cycles are mixed. Those mixed cycles are what ABS uses. The ten orbits with no étale prime are all certified, in 0.2 s and 1.7 s on average for $d = 2$ and $d = 3$. For recurrences the real place settles one side in most instances. From order 7 on, the instances left are those where the cone is not reached and the cycles modulo small primes exceed the limits.
+On quadratic maps of $\mathbb{Z}^3$ the sieve fails: a cycle of length $L$ is étale with probability about $(1 - 1/p)^L$, and most cycles are mixed. Those mixed cycles are what ABS uses. The ten orbits with no étale prime are all certified, in 0.2 s and 1.7 s on average for $d = 2$ and $d = 3$. For recurrences the real place now settles almost every instance on both sides; the $p$-adic records are left to those whose dominant root has coefficient $0$ or whose dominant roots are not a single root or a single complex pair.
 
-The sieve's counts depend on load. It ran alongside ABS, so the Hénon count is 131 here against 135 alone at the same timeout. A comparison with SKOLEM needs both tools run on the same data set on better hardware: SKOLEM's published times come from a 16-thread server, and it is not made here.
+The sieve's counts depend on load. It ran alongside ABS, so the Hénon count is 131 here against 135 alone at the same timeout.
+
+**On the SKOLEM data set itself** (`--dataset mfcs.tpls`), with the real place built up step by step on the same 180 instances (20 per order, seed 0, 30 s each):
+
+| real place | certified | timed out | mean time of certified |
+|---|---|---|---|
+| invariant cone | 120 | 35 | 2.3 s |
+| + dominant root | 149 | 19 | 1.2 s |
+| + dominant complex pair (Baker–Davenport) | **180** | 0 | 0.02 s |
+
+On 900 other instances (100 per order, seed 1) ABS certifies 899, in 0.03 s on average; one of order 9 times out. Every certified zero set was checked again, independently, against the exact zeros up to $|n| = N + 2000$, $N$ the larger of the two real-place bounds (up to 76,509): no difference.
+
+This is not yet a win over SKOLEM: the gain comes from Baker–Davenport, which SKOLEM has too, and its published 51% may be for another of its algorithms. The two have to be run on the same instances and machine; that run is not made here.
 
 ### Speed
 
@@ -468,6 +480,8 @@ pytest test/test_group_algebra.py test/test_ultrametric.py test/test_padic_flow.
 python benchmarks/padic_flow.py   # GPU throughput and set-up times
 python benchmarks/skolem.py mfcs.tpls --per-order 50   # SKOLEM dataset, see the docstring
 python benchmarks/nonlinear_skolem.py --count 200
+pip install python-flint   # ball arithmetic for the real place of adelic_sieve.py
+python benchmarks/adelic_sieve.py recurrences --dataset mfcs.tpls --per-order 100 --modes abs
 ```
 
 `pytest test` runs everything; `test_group_algebra.py` needs a few GB of memory.

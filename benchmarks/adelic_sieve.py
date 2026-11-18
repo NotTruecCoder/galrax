@@ -46,6 +46,7 @@ maps, with every hit there checked in integers.
 import argparse
 import math
 import multiprocessing as mp
+import os
 import random
 import time
 from fractions import Fraction
@@ -233,7 +234,18 @@ def sound(record, zeros):
 # (1) recurrences, (2) quadratic maps, (3) Henon maps.
 
 
-def recurrence_cases(per_order, rng):
+def recurrence_cases(per_order, rng, dataset=None):
+    """Drawn as in the SKOLEM data set, or sampled from it (`mfcs.tpls`, as in
+    `benchmarks/skolem.py`), so both tools can be run on the same instances.
+    """
+    if dataset:
+        import ast
+
+        with open(dataset) as f:
+            data = [ast.literal_eval(line) for line in f if line.strip()]
+        return [("recurrence", k, tuple(r), tuple(u))
+                for k in range(2, 11)
+                for _, r, u in rng.sample([c for c in data if c[0] == k], per_order)]
     cases = []
     for k in range(2, 11):
         while sum(1 for c in cases if c[1] == k) < per_order:
@@ -390,11 +402,57 @@ def cone(r, grid=400):
     return None
 
 
+def dominant(r, u, cap=10**5, prec=128):
+    """`N` with `u_n != 0` for every `n >= N`, when the characteristic polynomial is
+    squarefree with one root `l` of largest modulus and `u_n = c l^n + sum_i c_i l_i^n`
+    has `c != 0`; `None` otherwise or if `N > cap`. In ball arithmetic (Arb): every
+    `|l_i| <= q |l|` with `q < 1`, so `|u_n| >= |l|^n (|c| - q^n sum_i |c_i|) > 0` once
+    `q^N sum_i |c_i| < |c|`. Equal moduli (a complex pair, `+-l`) are left to others.
+    """
+    import flint
+
+    k = len(r)
+    P = flint.fmpz_poly([-c for c in reversed(r)] + [1])
+    if P.gcd(P.derivative()).degree() > 0:
+        return None
+    old, flint.ctx.prec = flint.ctx.prec, prec
+    try:
+        roots = sorted((z for z, _ in P.complex_roots()), key=lambda z: -z.abs_upper().mid())
+        top, rest = roots[0], roots[1:]
+        rho = max(z.abs_upper() for z in rest)
+        if not top.abs_lower() > rho:
+            return None
+        V = flint.acb_mat([[z**n for z in roots] for n in range(k)])
+        c = V.solve(flint.acb_mat([[v] for v in u])).entries()
+        lead, tail = c[0].abs_lower(), sum(x.abs_upper() for x in c[1:])
+        if not lead > 0:
+            return None
+        if tail == 0:
+            return 0
+        N = ((tail / lead).log() / (top.abs_lower() / rho).log()).upper()
+        if not N.is_finite():
+            return None
+        N = max(0, math.floor(float(N.mid())) + 1)  # an exact endpoint; floor + 1 is past it
+    finally:
+        flint.ctx.prec = old
+    return N if N <= cap else None
+
+
 def real_record(r, u, sides, steps=300):
     """The real place for a recurrence: `T` such that `u_n != 0` for every `n > T`,
-    as a record with an empty cover, or `None` if the orbit does not enter the cone
-    within `steps`.
+    as a record with an empty cover, or `None` if neither the dominant root, a
+    dominant complex pair (Baker--Davenport, `baker.py`) nor the cone within `steps`
+    gives one.
     """
+    level = int(os.environ.get("ABS_REAL", "2"))  # 0: the cone, 1: + dominant root, 2: + Baker
+    N = dominant(r, u) if level >= 1 else None
+    if N is None and level >= 2:
+        from baker import complex_pair
+
+        N = complex_pair(r, u)
+    if N is not None:
+        return {"p": None, "type": "real", "T": max(N, len(u) - 1), "cover": [],
+                "counted": [], "sides": sides}
     theta = cone(r)
     if theta is None:
         return None
@@ -579,17 +637,25 @@ def main():
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--processes", type=int, default=mp.cpu_count())
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--dataset", help="mfcs.tpls of the SKOLEM tool, for recurrences")
+    parser.add_argument("--modes", default="sieve,abs")
+    parser.add_argument("--dump", help="write the results here, one repr per line")
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
     if args.data == "recurrences":
-        cases = recurrence_cases(args.per_order, rng)
+        cases = recurrence_cases(args.per_order, rng, args.dataset)
     elif args.data == "quadratic":
         cases = quadratic_cases(args.count, rng)
     else:
         cases = henon_cases(args.count, rng)
-    tasks = [((group(c), mode, i), c) for i, c in enumerate(cases) for mode in ("sieve", "abs")]
-    report(run(tasks, args.timeout, args.processes, job))
+    modes = args.modes.split(",")
+    tasks = [((group(c), mode, i), c) for i, c in enumerate(cases) for mode in modes]
+    results = run(tasks, args.timeout, args.processes, job)
+    if args.dump:
+        with open(args.dump, "w") as f:
+            f.writelines(f"{r!r}\n" for r in results)
+    report(results)
 
 
 if __name__ == "__main__":

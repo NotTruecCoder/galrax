@@ -1,7 +1,9 @@
 import pathlib
 import random
-from fractions import Fraction
 import sys
+from fractions import Fraction
+
+import pytest
 
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "benchmarks"))
@@ -68,11 +70,39 @@ def test_real_place_for_recurrences():
     assert real_record((0, 1), (1, 0), "forward") is None  # no dominant coefficient
 
 
-def test_recurrence_over_z():
+def test_recurrence_over_z(monkeypatch):
     case = ("recurrence", 2, (1, 1), (2, 3))  # Fibonacci from F_3: zero at n = -3
     a, b = solve(case, "sieve"), solve(case, "abs")
     assert a["certified"] and b["certified"] and a["zeros"] == b["zeros"] == [-3]
     # u_n = u_{n-1} + 2 u_{n-2}: singular at 2, so n < 0 needs the reversed orbit
     case = ("recurrence", 2, (1, 2), (1, -1))
+    # u_n = (-1)^n: the coefficient of the root 2 is 0, so n >= 0 needs the prime 2,
+    # while n < 0 (roots -2 and 1) has a dominant root
+    assert solve(case, "abs")["by"] == "mixed / real"
+    monkeypatch.setenv("ABS_REAL", "0")  # the cone alone leaves both sides to p = 2
     a, b = solve(case, "sieve"), solve(case, "abs")
     assert b["certified"] and b["by"].startswith("mixed") and b["zeros"] == a["zeros"] == []
+
+
+def test_dominant_roots_bound_the_zeros():
+    pytest.importorskip("flint")
+    from adelic_sieve import dominant
+    from baker import complex_pair
+
+    assert dominant((1, 1), (0, 1)) == 1  # Fibonacci: the zero n = 0 only
+    assert dominant((0, -1), (1, 0)) is None and complex_pair((0, -1), (1, 0)) is None  # i^n
+    # (x - 1)(x^2 - 2x + 5) from (1, 2, 3): Lambda = 0 is possible in Q(i), so no bound
+    assert complex_pair((3, -7, 5), (1, 2, 3)) is None
+    rng, bounds = random.Random(3), {"real": 0, "pair": 0}
+    while min(bounds.values()) < 5:
+        k = rng.randint(3, 6)
+        r = tuple(rng.randint(-9, 9) for _ in range(k))
+        u = tuple(rng.randint(-9, 9) for _ in range(k))
+        if not r[-1]:
+            continue
+        N, kind = dominant(r, u), "real"
+        if N is None:
+            N, kind = complex_pair(r, u), "pair"
+        if N is not None:
+            bounds[kind] += 1
+            assert not [n for n in exact_zeros(list(r), list(u), N + 100) if n >= N], (r, u)

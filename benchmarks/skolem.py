@@ -63,22 +63,38 @@ def cheap_primes(recurrence, initial, count, cap=5000):
     return [p for _, p in sorted(periods)[:count]]
 
 
+Q = 2**521 - 1  # a prime: zeros are first looked for modulo Q, then checked exactly
+
+
 def exact_zeros(recurrence, initial, window):
     """The `n` with `|n| <= window` and `u_n = 0`, in exact arithmetic."""
     k = len(recurrence)
-    forward = list(initial)
-    while len(forward) <= window:
-        forward.append(sum(r * forward[-1 - i] for i, r in enumerate(recurrence)))
     # u_{n-k} = (u_n - r_0 u_{n-1} - ... - r_{k-2} u_{n-k+1}) / r_{k-1}
+    inverse = pow(recurrence[-1], -1, Q)
+    candidates, state = [], [v % Q for v in initial]
+    for n in range(window + 1):
+        if n >= k:
+            state = state[1:] + [sum(r * state[-1 - i] for i, r in enumerate(recurrence)) % Q]
+        if state[min(n, k - 1)] == 0:
+            candidates.append(n)
+    state = [v % Q for v in initial]
+    for m in range(1, window + 1):
+        head = (state[k - 1] - sum(r * state[k - 2 - i] for i, r in enumerate(recurrence[:-1])))
+        state = [head * inverse % Q] + state[:-1]
+        if state[0] == 0:
+            candidates.append(-m)
+    # each candidate checked exactly, up to the farthest one on each side
+    forward = list(initial)
+    while len(forward) <= max([0] + candidates):
+        forward.append(sum(r * forward[-1 - i] for i, r in enumerate(recurrence)))
     backward = [Fraction(v) for v in initial]
-    for _ in range(window):
+    for _ in range(-min([0] + candidates)):
         head = backward[k - 1] - sum(
             r * backward[k - 2 - i] for i, r in enumerate(recurrence[:-1])
         )
         backward.insert(0, head / recurrence[-1])
-    zeros = [n for n, v in enumerate(forward[: window + 1]) if v == 0]
-    zeros += [n - window for n, v in enumerate(backward[:window]) if v == 0]
-    return sorted(zeros)
+    M = len(backward) - k  # backward = [u_{-M}, ..., u_{k-1}]
+    return sorted(n for n in candidates if (forward[n] if n >= 0 else backward[M + n]) == 0)
 
 
 def sieve(sets):
