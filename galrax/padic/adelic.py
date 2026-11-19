@@ -141,6 +141,19 @@ def branch(F, step, x0, p, cap=5000):
     return ("nilpotent" if not any(map(any, power)) else "mixed"), p * len(orbit)
 
 
+def etale_primes(F, x0, X, cap=5000) -> list:
+    """The odd primes `p <= X` at which the cycle of the orbit of `x0` modulo `p` is
+    etale (its Jacobian invertible modulo `p`): there Strassmann's bound settles every
+    class of times, `Orbit.times`. An empty list means that the sieve needs the records
+    modulo `p^k` of full ABS. Primes whose cycle passes `cap` points are left out.
+    """
+    x0 = tuple(int(v) for v in x0)
+    F = [as_poly(f, len(x0)) for f in F]
+    step = stepper(F)
+    return [p for p in range(3, int(X) + 1) if all(p % q for q in range(2, math.isqrt(p) + 1))
+            and (branch(F, step, x0, p, cap) or ("",))[0] == "etale"]
+
+
 def depth_record(step, x0, condition, p, kind, sides, cap=20000, top=12):
     """The orbit modulo `p^k` for `k = 1, 2, ...` until no point of its cycle meets
     `g = 0` modulo `p^k` (`condition` as in `as_condition`; an exact zero of `g` is
@@ -169,8 +182,14 @@ def etale_record(F, x0, condition, p):
     from .return_set import Orbit
 
     d = len(x0)
-    orbit = Orbit(p, max(4, int(30 / p.bit_length())), F, x0)
-    event = orbit.times(PAdicEvent(as_condition(condition, d)))
+    # Strassmann's bound is sound at any precision, only weaker (None if h vanishes to
+    # it), and Orbit costs grow fast with it: the cheap precision first.
+    top = max(4, int(30 / p.bit_length()))
+    for K in sorted({4, top}):
+        orbit = Orbit(p, K, F, x0)
+        event = orbit.times(PAdicEvent(as_condition(condition, d)))
+        if all(b is not None for _, _, b in event.classes):
+            break
     cover = [
         (b.center[0] % (event.period * p**b.level), event.period * p**b.level)
         for b in event.balls
@@ -462,7 +481,8 @@ def certify(F, step, x0, condition, zeros_in, window, *, back=None, invertible,
             queue = []
             for p, (t, c) in types.items():
                 if t == "etale" and p > 2:
-                    queue.append((c, 1, p, "orbit"))
+                    # Orbit.times costs far more per point than a depth record
+                    queue.append((30 * c, 1, p, "orbit"))
                 if mode == "abs" and p < depth_below:
                     queue.append((c, 0, p, "depth"))
                     if t != "etale" and back is not None:

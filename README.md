@@ -209,7 +209,7 @@ galrax-abs map "i + 1" "2*x" --vars i,x --start 0,1 --until "x == 2*i + 22"
 galrax-abs tpls mfcs.tpls --timeout 30 --jobs 4 > zeros.jsonl  # (k, r, u) per line
 ```
 
-On 900 instances of the data set of the SKOLEM tool (Bilu, Luca, Nieuwveld, Ouaknine, Purser, Worrell, MFCS 2022), on the same laptop, ABS certifies 899 in 0.15 s on average, SKOLEM 890 with Baker–Davenport and 404 with Leapfrogging, and no tool gave a wrong zero set. Both rest on the same Baker–Davenport argument for recurrences; ABS's own contribution is for maps, where no such argument exists: on orbits of random quadratic maps of $\mathbb{Z}^3$ it certifies 93 of 100, against 1 for the étale sieve alone. The settings, all tables and the history of the parameters are in [`benchmarks/README.md`](benchmarks/README.md).
+On 900 instances of the data set of the SKOLEM tool (Bilu, Luca, Nieuwveld, Ouaknine, Purser, Worrell, MFCS 2022), on the same laptop, ABS certifies 899 in 0.15 s on average, SKOLEM 890 with Baker–Davenport and 404 with Leapfrogging, and no tool gave a wrong zero set. Both rest on the same Baker–Davenport argument for recurrences; ABS's own contribution is for maps, where no such argument exists: on orbits of random quadratic maps of $\mathbb{Z}^3$ it certifies all 100, against 1 for the étale sieve alone. The settings, all tables and the history of the parameters are in [`benchmarks/README.md`](benchmarks/README.md).
 
 ### Speed
 
@@ -360,6 +360,7 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 | `PAdicEvent`, `EventSet` | An event $g(\varphi_t(x)) = 0$ and its set of times, a finite union of balls. |
 | `Equilibrium`, `Linearization` | Zeros of $f$ with Hensel certificates, and linearising coordinates in dimension one. |
 | `NormalForm` | The Poincaré–Dulac normal form in any dimension, with `radius`, `resonant_terms`, `certificate`, `flow_map`. |
+| `IntegrableSystem(p, F)`, `EliassonVey` | Poisson-commuting polynomials in $(x, y)$ with a non-degenerate critical point of rank 0 at the origin; `normal_form()` gives the $p$-adic Eliasson–Vey normal form $F \circ \Phi = G(q)$, $\Phi$ symplectic, for every Williamson type, with `G`, `transformation`, `radius`, `certificate`. |
 | `FormalGroupFlow` | The flow of a formal group (`multiplicative`, `weierstrass`): `logarithm`, `exponential`, `multiple`. |
 | `FormalGroup(p, precision, omega, dimension)` | A $d$-dimensional formal group from its invariant differentials: commuting `fields`, `chart`, `logarithm`, `exponential`, `product`. |
 | `tiny_integrals`, `chabauty_zeros`, `disc_differentials` | Tiny integrals of $x^k\,dx/y$ on $y^2 = f(x)$, and the zeros of a Chabauty function in a residue disc, with Strassmann's bound. |
@@ -367,6 +368,7 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 | `PAdicMap`, `Cycle`, `Component` | Discrete maps: cycle trees, minimal decompositions, minimality; `iterate` ($T^n$ for large, negative or $p$-adic $n$, or an array of $n$), `index`, `period`, `hitting_times` of a loop; polynomial maps of $\mathbb{Z}_p^d$ through `Orbit`. |
 | `Orbit(p, precision, g, x)` | The orbit of a point under a polynomial map of $\mathbb{Z}_p^d$, without attracting directions: $x_n$ for arrays of $n$, `times` of an event (classes modulo $M p^k$ and Strassmann's bound), `index`. |
 | `recurrence_zeros`, `map_zeros`, `henon_zeros`, `ZeroSet` | Certified zero sets over $\mathbb{Z}$ of integer recurrences and orbits, by ABS (`galrax.padic.adelic`). |
+| `etale_primes(F, x0, X)` | The odd primes $p \le X$ at which the cycle of the orbit modulo $p$ is étale, so Strassmann's bound suffices; an empty list means full ABS is needed. |
 | `value_times`, `hypersurface_times`, `loop_exit`, `charpoly_to_r` | $u_n = c$, $g(x_n) = 0$ and the exit step of a polynomial loop, by ABS; the command `galrax-abs`. |
 | `recurrence_times`, `companion`, `linear` | Zeros of linear recurrences through the companion matrix; linear maps. |
 | `matrix_power_index` | The first $n$ with $(M^n v)_i = y \bmod p^K$: degrees of Chebyshev, Lucas and Dickson sequences. |
@@ -432,7 +434,7 @@ python benchmarks/adelic_sieve.py recurrences --dataset mfcs.tpls --per-order 10
 
 | Path | Contents |
 |---|---|
-| `galrax/padic/` | `flow.py` (table-driven flows, flow-box coordinates), `arithmetic.py` (residues, limbs, Horner), `normal_form.py` (Smith forms, certificates), `formal.py` (formal groups, elliptic curves, height bounds), `interpolation.py` (time-one maps, minimal actions), `return_set.py` (orbits and return sets), `equilibria.py`, `events.py`, `koopman.py`, `maps.py`, `series.py`, `plot.py`. |
+| `galrax/padic/` | `flow.py` (table-driven flows, flow-box coordinates), `arithmetic.py` (residues, limbs, Horner), `normal_form.py` (Smith forms, certificates), `integrable.py` (Eliasson–Vey), `formal.py` (formal groups, elliptic curves, height bounds), `interpolation.py` (time-one maps, minimal actions), `return_set.py` (orbits and return sets), `equilibria.py`, `events.py`, `koopman.py`, `maps.py`, `series.py`, `plot.py`. |
 | `galrax/ultrametric/` | $\mathbb{Z}_p$ to $n$ digits, ultrametric operators, Kozyrev wavelets. |
 | `galrax/groups/` | Finite groups, representations, Fourier transforms, `GroupODE`, `Lawson`. |
 | `test/` | One file per module: `test_padic_*.py`, `test_ultrametric.py`, `test_group_algebra.py`, and the tests of the examples. |

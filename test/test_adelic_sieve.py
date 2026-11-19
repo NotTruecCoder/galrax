@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "benchmarks"))
 
 from adelic_sieve import henon_cases, quadratic_cases, solve  # noqa: E402
-from galrax.padic import henon_zeros, map_zeros, recurrence_zeros  # noqa: E402
+from galrax.padic import etale_primes, henon_zeros, map_zeros, recurrence_zeros  # noqa: E402
 from galrax.padic.adelic import (  # noqa: E402
     depth_record,
     exact_zeros,
@@ -20,6 +20,28 @@ from galrax.padic.adelic import (  # noqa: E402
     verdict,
 )
 from nonlinear_skolem import exact_hits  # noqa: E402
+
+
+def test_etale_primes():
+    # x -> x^2 + 1 from 0: J = 2x, so for odd p the cycle is etale iff it misses 0 mod p.
+    def misses_zero(p):
+        seen, x = [], 0
+        while x not in seen:
+            seen.append(x)
+            x = (x * x + 1) % p
+        return 0 not in seen[seen.index(x):]
+
+    primes = [p for p in range(3, 60) if all(p % q for q in range(2, p))]
+    assert etale_primes([{(2,): 1, (0,): 1}], (0,), 60) == [p for p in primes if misses_zero(p)]
+    # a Henon map has det J = 1: every odd prime is etale
+    assert etale_primes([{(2, 0): 1, (0, 0): -2, (0, 1): -1}, {(1, 0): 1}], (1, 0), 30) == primes[:9]
+
+
+def test_cheap_records_come_before_strassmann():
+    # Strassmann at p = 3 costs seconds; the nilpotent record at p = 2 settles it at once.
+    F = [{(0, 0): -3, (0, 1): 2, (2, 0): 2, (0, 2): -2}, {(0, 1): -2, (1, 1): 2, (0, 2): -1}]
+    found = map_zeros(F, (2, 0), -4)
+    assert found.certified and found.zeros == () and found.primes == (2, 3)
 
 
 def test_nilpotent_branch_bounds_the_zeros():

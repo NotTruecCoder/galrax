@@ -75,10 +75,12 @@ All runs use 12 processes on a laptop, with 30 s per instance (60 s for Hénon).
 | recurrences, order 2–4 | 60 | 60 | 60 | 0 / 0 | 2.3 s / 0.03 s | real place on a side 58, étale modulo $p^k$ 3 |
 | recurrences, order 5–6 | 40 | 16 | 40 | 22 / 0 | 13 s / 0.09 s | real place 40 |
 | recurrences, order 7–10 | 80 | 0 | 80 | 37 / 0 | – / 0.07 s | real place 80 |
-| quadratic, $d = 2$ | 100 | 82 | 97 | 9 / 3 | 5.1 s / 0.6 s | nilpotent 42, mixed 37, étale modulo $p^k$ 15, Strassmann 3 |
-| quadratic, $d = 3$ | 100 | 1 | 93 | 96 / 7 | 30 s / 2.8 s | mixed 55, nilpotent 25, étale modulo $p^k$ 13 |
+| quadratic, $d = 2$ | 100 | 82 | 100 | 9 / 0 | 5.1 s / 0.2 s | nilpotent 42, mixed 41, étale modulo $p^k$ 16, Strassmann 1 |
+| quadratic, $d = 3$ | 100 | 1 | 100 | 96 / 0 | 30 s / 3.0 s | mixed 60, nilpotent 25, étale modulo $p^k$ 14, Strassmann 1 |
 | Hénon | 200 | 131 | 200 | 69 / 0 | 21 s / < 1 ms | real place 200 (1 periodic, reported as its zeros on one period and the period) |
-| **all** | **580** | **290** | **570** | 233 / 10 | | |
+| **all** | **580** | **290** | **580** | 233 / 0 | | |
+
+The quadratic rows of ABS are a later run of ABS alone: Strassmann records are first computed to 4 digits (the bound is sound at any precision, only weaker, and `Orbit` grows fast with it), and they are queued after depth records of up to 30 times their cost. Before, 3 and 7 of the 100 orbits timed out, all while a Strassmann record was being computed that a cheap depth record made unnecessary. The 900 SKOLEM instances give the same 899 either way.
 
 In "settled by", a recurrence counts once for each kind of record that settles one of its two sides.
 

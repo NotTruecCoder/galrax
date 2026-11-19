@@ -18,6 +18,7 @@ residue discs. Flows run on `int64` JAX arrays, with any number of digits.
 """
 
 from .adelic import (
+    etale_primes as etale_primes,
     henon_zeros as henon_zeros,
     map_zeros as map_zeros,
     recurrence_zeros as recurrence_zeros,
@@ -50,6 +51,10 @@ from .interpolation import (
     lie_bracket as lie_bracket,
     MinimalAction as MinimalAction,
     time_one_field as time_one_field,
+)
+from .integrable import (
+    EliassonVey as EliassonVey,
+    IntegrableSystem as IntegrableSystem,
 )
 from .koopman import (
     advection_diffusion as advection_diffusion,

@@ -64,10 +64,12 @@ def smith(matrix, p: int, digits: int):
     return left, left_inverse, right, s
 
 
-def _solve(matrix, vector, p: int, digits: int):
-    """`x` with `M x = b` modulo `p^digits`, for `b` divisible enough; `None` if not."""
-    left, _, right, s = smith(matrix, p, digits)
+def _solve(matrix, vector, p: int, digits: int, decomposition=None):
+    """`x` with `M x = b` modulo `p^digits`, for `b` divisible enough; `None` if not.
+    `M` may be rectangular; `decomposition` is `smith(M, p, digits)` if known."""
+    left, _, right, s = decomposition or smith(matrix, p, digits)
     c = left @ np.array(vector, dtype=object) % p**digits
+    s = list(s) + [digits] * (len(c) - len(s))  # rows past the rank: M x has no part there
     y = []
     for value, v in zip(c, s):
         if v >= digits:
@@ -78,6 +80,8 @@ def _solve(matrix, vector, p: int, digits: int):
             return None
         else:
             y.append(int(value) // p**v)
+    cols = len(right)
+    y = y[:cols] + [0] * (cols - len(y))
     return [int(v) % p**digits for v in right @ np.array(y, dtype=object)]
 
 
@@ -310,7 +314,7 @@ def _substitute(poly: dict, maps: list[dict], degree: int, m: int) -> dict:
     without constant term.
     """
     d = len(maps)
-    one = (0,) * d
+    one = next(((0,) * len(e) for f in maps for e in f), (0,) * d)  # maps may have other arity
     powers = [[{one: 1}] for _ in range(d)]
     out = {}
     for e, c in poly.items():
