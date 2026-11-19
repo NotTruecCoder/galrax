@@ -446,7 +446,9 @@ python benchmarks/adelic_sieve.py recurrences --dataset mfcs.tpls --per-order 10
 
 ## Citing
 
-If you use galrax, please cite it through [`CITATION.cff`](https://github.com/NotTruecCoder/galrax/blob/main/CITATION.cff).
+[![DOI](https://zenodo.org/badge/1444132823.svg)](https://doi.org/10.5281/zenodo.24323008)
+
+If you use galrax, please cite it through [`CITATION.cff`](https://github.com/NotTruecCoder/galrax/blob/main/CITATION.cff) or its DOI, [10.5281/zenodo.24323008](https://doi.org/10.5281/zenodo.24323008) for every version and [10.5281/zenodo.24377208](https://doi.org/10.5281/zenodo.24377208) for 0.2.0.
 
 ## Credits and license
 
