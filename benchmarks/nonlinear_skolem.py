@@ -21,7 +21,8 @@ import argparse
 import random
 import time
 
-from skolem import run, sieve
+from galrax.padic.cli import run
+from skolem import sieve
 
 
 PRIMES = tuple(p for p in range(3, 200) if all(p % q for q in range(2, p)))

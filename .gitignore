@@ -10,3 +10,4 @@ site/
 .venv/
 uv.lock
 .vscode/
+oeis-cache/

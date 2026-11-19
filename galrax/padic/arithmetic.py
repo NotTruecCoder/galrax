@@ -13,6 +13,14 @@ def _on_host(x) -> bool:
     return not isinstance(x, jax.Array) and np.asarray(x).dtype in (object, np.uint64)
 
 
+def _host_integers(x) -> np.ndarray:
+    """`x` as an object array of Python integers; floats and other values are refused."""
+    array = np.asarray(x).astype(object)
+    if not all(isinstance(v, (int, np.integer)) for v in array.flat):
+        raise ValueError("p-adic integers must be given as integer arrays.")
+    return array
+
+
 def is_prime(p: int) -> bool:
     return p >= 2 and all(p % k for k in range(2, math.isqrt(p) + 1))
 
@@ -141,7 +149,7 @@ class Residues:
         negative ones included.
         """
         if _on_host(x):
-            x = np.asarray(np.asarray(x).astype(object) % self.modulus).astype(np.int64)
+            x = np.asarray(_host_integers(x) % self.modulus).astype(np.int64)
         x = jnp.asarray(x)
         if not jnp.issubdtype(x.dtype, jnp.integer):
             raise ValueError("p-adic integers must be given as integer arrays.")
@@ -323,7 +331,7 @@ class Limbs(Residues):
 
     def asarray(self, x):
         if _on_host(x):
-            array = np.asarray(x).astype(object) % self.modulus
+            array = _host_integers(x) % self.modulus
             limbs = [array // self.base**k % self.base for k in range(self.limbs)]
             return jnp.asarray(np.stack(limbs, axis=-1).astype(np.int64))
         x = jnp.asarray(x)

@@ -136,8 +136,8 @@ class PAdicFlow:
         self._source = given
         field = parse_field(given, p, digits=K)
         d = len(field)
-        rate = field_valuation(field, p, cap=K)
         needed = 2 if p == 2 else 1
+        rate = field_valuation(field, p, cap=max(K, needed))  # K = 1 < 2 for p = 2
         if rate < needed:
             raise ValueError(
                 f"The coefficients of the vector field must be divisible by "

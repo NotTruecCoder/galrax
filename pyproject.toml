@@ -41,6 +41,9 @@ requires-python = ">=3.11"
 urls = {repository = "https://github.com/NotTruecCoder/galrax"}
 version = "0.2.0"
 
+[project.scripts]
+galrax-abs = "galrax.padic.cli:main"
+
 [tool.hatch.build]
 include = ["galrax/*", "NOTICE"]
 

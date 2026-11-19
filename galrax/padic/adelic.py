@@ -1,9 +1,9 @@
 """ABS, the adelic sieve by branch type: certified zero sets of orbits over `Z`.
 
-The question is the set of times `n` with `x_n = target` (`x` the first coordinate) for
-an integer orbit of a polynomial map, or with `u_n = 0` for an integer linear
-recurrence. Every place contributes a record, a class cover of the times `n >= T` that
-can still hold zeros:
+The question is the set of times `n` with `g(x_n) = 0` for an integer orbit of a
+polynomial map and an integer polynomial `g` (`x_n = target`, `x` the first coordinate,
+is `g = x - target`), or with `u_n = 0` for an integer linear recurrence. Every place
+contributes a record, a class cover of the times `n >= T` that can still hold zeros:
 
 - at an etale prime (the Jacobian `A` of the cycle modulo `p` invertible), Strassmann's
   bound on every class `n = c mod N`, through `Orbit.times`;
@@ -50,6 +50,23 @@ def stepper(F):
         return tuple(out)
 
     return step
+
+
+def as_poly(f, d):
+    """`f` as `{exponents: coefficient}` in Python integers: a dict, or anything with a
+    `.dict()` such as a Sage polynomial (duck-typed, Sage is not imported)."""
+    items = f.dict().items() if hasattr(f, "dict") else f.items()
+    return {(int(e),) if d == 1 and not hasattr(e, "__len__") else tuple(map(int, e)):
+            int(c) for e, c in items}
+
+
+def as_condition(g, d):
+    """The polynomial `g` of a zero condition `g(x) = 0`; an integer `target` stands
+    for `x_0 - target`."""
+    if isinstance(g, dict) or hasattr(g, "dict"):
+        return as_poly(g, d)
+    one = tuple(int(i == 0) for i in range(d))
+    return {one: 1, (0,) * d: -int(g)}
 
 
 def jacobian(F, x, m):
@@ -124,13 +141,14 @@ def branch(F, step, x0, p, cap=5000):
     return ("nilpotent" if not any(map(any, power)) else "mixed"), p * len(orbit)
 
 
-def depth_record(step, x0, target, p, kind, sides, cap=20000, top=12):
-    """The orbit modulo `p^k` for `k = 1, 2, ...` until no point of its cycle hits
-    the target or the cycle passes `cap` points: the deepest record. `sides` is
-    `"both"` at a prime where the map is invertible modulo `p` (the cycle is pure and
-    runs backwards too), else `"forward"`: the cover holds for `n >= T` only.
+def depth_record(step, x0, condition, p, kind, sides, cap=20000, top=12):
+    """The orbit modulo `p^k` for `k = 1, 2, ...` until no point of its cycle meets
+    `g = 0` modulo `p^k` (`condition` as in `as_condition`; an exact zero of `g` is
+    one modulo every `p^k`) or the cycle passes `cap` points: the deepest record.
+    `sides` is `"both"` at a prime where the map is invertible modulo `p` (the cycle is
+    pure and runs backwards too), else `"forward"`: the cover holds for `n >= T` only.
     """
-    best = None
+    g, best = stepper([as_condition(condition, len(x0))]), None
     for k in range(1, top + 1):
         m = p**k
         found = cycle_mod(step, x0, m, cap)
@@ -138,7 +156,7 @@ def depth_record(step, x0, target, p, kind, sides, cap=20000, top=12):
             break
         orbit, T = found
         P = len(orbit) - T
-        hits = sorted({n % P for n in range(T, len(orbit)) if (orbit[n][0] - target) % m == 0})
+        hits = sorted({n % P for n in range(T, len(orbit)) if g(orbit[n], m)[0] == 0})
         best = {"p": p, "k": k, "type": kind, "T": T, "cover": [(c, P) for c in hits],
                 "counted": [(c, P, None) for c in hits], "sides": sides}
         if not hits:
@@ -146,14 +164,13 @@ def depth_record(step, x0, target, p, kind, sides, cap=20000, top=12):
     return best
 
 
-def etale_record(F, x0, target, p):
+def etale_record(F, x0, condition, p):
     from .events import PAdicEvent
     from .return_set import Orbit
 
     d = len(x0)
     orbit = Orbit(p, max(4, int(30 / p.bit_length())), F, x0)
-    x = tuple(int(i == 0) for i in range(d))
-    event = orbit.times(PAdicEvent({x: 1, (0,) * d: -target}))
+    event = orbit.times(PAdicEvent(as_condition(condition, d)))
     cover = [
         (b.center[0] % (event.period * p**b.level), event.period * p**b.level)
         for b in event.balls
@@ -204,18 +221,19 @@ def sound(record, zeros):
     )
 
 
-def window_zeros(step, x0, target, window, exact_bits=1 << 22):
-    """`n` in `0..window` with `x_n = target`: modulo `Q`, each hit checked in
-    integers; `None` if a hit is too far for integers.
+def window_zeros(step, x0, condition, window, exact_bits=1 << 22):
+    """`n` in `0..window` with `g(x_n) = 0` (`condition` as in `as_condition`):
+    modulo `Q`, each hit checked in integers; `None` if a hit is too far for integers.
     """
+    g = stepper([as_condition(condition, len(x0))])
     hits, x = [], tuple(v % Q for v in x0)
     for n in range(window + 1):
-        if (x[0] - target) % Q == 0:
+        if g(x, Q)[0] == 0:
             hits.append(n)
         x = step(x, Q)
     x, out = tuple(x0), []
     for n in range(hits[-1] + 1 if hits else 0):
-        if n in hits and x[0] == target:
+        if n in hits and g(x)[0] == 0:
             out.append(n)
         x = step(x)
         if max(abs(v).bit_length() for v in x) > exact_bits:
@@ -247,6 +265,8 @@ def henon_real(c, P, start, target, cap=10**6):
         x, y, n = y, c * x + poly(y), n + 1
     else:
         raise RuntimeError("no escape")
+    if len(P) != 3 or not P[2]:  # the escape bound is for quadratic P; a cycle above is exact
+        raise ValueError("Escape needs P = (a_0, a_1, a_2) with a_2 != 0.")
     (x, y), n = start, 0
     for _ in range(cap):
         if abs(x) >= max(abs(y), R) and abs(x) > abs(target):
@@ -306,7 +326,7 @@ def dominant(r, u, cap=10**5, prec=128):
     try:
         roots = sorted((z for z, _ in P.complex_roots()), key=lambda z: -z.abs_upper().mid())
         top, rest = roots[0], roots[1:]
-        rho = max(z.abs_upper() for z in rest)
+        rho = max((z.abs_upper() for z in rest), default=flint.arb(0))  # order 1: no rest
         if not top.abs_lower() > rho:
             return None
         V = flint.acb_mat([[z**n for z in roots] for n in range(k)])
@@ -404,7 +424,7 @@ def exact_zeros(recurrence, initial, window):
     return sorted(n for n in candidates if (forward[n] if n >= 0 else backward[M + n]) == 0)
 
 
-def certify(F, step, x0, target, zeros_in, window, *, back=None, invertible,
+def certify(F, step, x0, condition, zeros_in, window, *, back=None, invertible,
             records=(), mode="abs", primes=8, depth_below=50, label=None):
     """The sieve over the places. `zeros_in(w)` gives the exact zeros with `|n| <= w`
     (`n >= 0` for a map that is not invertible), or `None` if they are out of reach;
@@ -412,9 +432,10 @@ def certify(F, step, x0, target, zeros_in, window, *, back=None, invertible,
     `records` are records found beforehand (the real place). `mode` is `"abs"`, or
     `"sieve"` for Strassmann at etale primes only. Returns a dict with `certified`,
     and when certified the `zeros` and the record types that settle them (`by`), plus
-    the primes used; `label` tags the internal soundness checks.
+    the primes used and the `records`; `condition` is `g` or a target (`as_condition`);
+    `label` tags the internal soundness checks.
     """
-    records = list(records)
+    records, condition = list(records), as_condition(condition, len(x0))
     result = {"certified": False, "primes": []}
     zeros, seen, etale, queue, types = None, None, 0, None, {}
     while True:
@@ -452,19 +473,20 @@ def certify(F, step, x0, target, zeros_in, window, *, back=None, invertible,
         _, _, p, how = queue.pop(0)
         t = types[p][0]
         if how == "orbit":
-            records.append(etale_record(F, x0, target, p))
+            records.append(etale_record(F, x0, condition, p))
             etale += 1
         elif how == "depth":
             sides = "both" if t == "etale" else "forward"
             kind = t if t != "etale" else "etale mod p^k"
-            if rec := depth_record(step, x0, target, p, kind, sides):
+            if rec := depth_record(step, x0, condition, p, kind, sides):
                 records.append(rec)
         else:
             Fb, stepb, s = back
             tb = (branch(Fb, stepb, s, p) or ("mixed",))[0]
-            if rec := depth_record(stepb, s, target, p, tb, "backward"):
+            if rec := depth_record(stepb, s, condition, p, tb, "backward"):
                 records.append(rec)
     result["primes"] = sorted({r["p"] for r in records if r["p"]})
+    result["records"] = records
     return result
 
 
@@ -480,16 +502,21 @@ class ZeroSet:
     period: int | None = None
     by: str | None = None
     primes: tuple = ()
+    records: tuple = dataclasses.field(default=(), compare=False, repr=False)
 
 
 def _zero_set(found) -> ZeroSet:
     return ZeroSet(found["certified"], tuple(found.get("zeros", ())), None,
-                   found.get("by"), tuple(found["primes"]))
+                   found.get("by"), tuple(found["primes"]), tuple(found["records"]))
 
 
-def recurrence_zeros(r, u, *, primes=8, depth_below=50, window=200, real=2) -> ZeroSet:
+def recurrence_zeros(r, u=None, *, primes=8, depth_below=50, window=200,
+                     real=2) -> ZeroSet:
     """Every `n` in `Z` with `u_n = 0`, for `u_n = r_0 u_{n-1} + ... + r_{k-1} u_{n-k}`
-    with integer `r`, `r_{k-1} != 0`, and initial values `u = (u_0, ..., u_{k-1})`."""
+    with integer `r`, `r_{k-1} != 0`, and initial values `u = (u_0, ..., u_{k-1})`. `r`
+    may also be a Sage `BinaryRecurrenceSequence` (`u_n = b u_{n-1} + c u_{n-2}`)."""
+    if u is None and hasattr(r, "u0"):
+        r, u = (r.b, r.c), (r.u0, r.u1)
     r, u = tuple(int(v) for v in r), tuple(int(v) for v in u)
     if len(r) != len(u) or not r[-1] or not any(u):
         raise ValueError("Need len(r) == len(u), r[-1] != 0 and u != 0.")
@@ -507,10 +534,19 @@ def recurrence_zeros(r, u, *, primes=8, depth_below=50, window=200, real=2) -> Z
 def map_zeros(F, x0, target, *, primes=8, depth_below=50, window=120) -> ZeroSet:
     """Every `n >= 0` with `x_n = target` along the integer orbit of `x0` under the
     polynomial map `F` of `Z^d` (`x` the first coordinate)."""
-    step, x0 = stepper(F), tuple(int(v) for v in x0)
-    found = certify(F, step, x0, target, lambda w: window_zeros(step, x0, target, w),
+    return orbit_zeros(F, x0, target, primes=primes, depth_below=depth_below,
+                       window=window)
+
+
+def orbit_zeros(F, x0, g, *, primes=8, depth_below=50, window=120) -> ZeroSet:
+    """Every `n >= 0` with `g(x_n) = 0`, `g` an integer polynomial or a target as in
+    `as_condition`."""
+    x0 = tuple(int(v) for v in x0)
+    F, g = [as_poly(f, len(x0)) for f in F], as_condition(g, len(x0))
+    step = stepper(F)
+    found = certify(F, step, x0, g, lambda w: window_zeros(step, x0, g, w),
                     window, invertible=False, primes=primes, depth_below=depth_below,
-                    label=(F, x0, target))
+                    label=(F, x0, g))
     return _zero_set(found)
 
 

@@ -23,6 +23,12 @@ from .adelic import (
     recurrence_zeros as recurrence_zeros,
     ZeroSet as ZeroSet,
 )
+from .applications import (
+    charpoly_to_r as charpoly_to_r,
+    hypersurface_times as hypersurface_times,
+    loop_exit as loop_exit,
+    value_times as value_times,
+)
 from .arithmetic import Limbs as Limbs, Residues as Residues
 from .equilibria import Equilibrium as Equilibrium, Linearization as Linearization
 from .events import EventSet as EventSet, PAdicEvent as PAdicEvent

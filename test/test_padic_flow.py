@@ -1290,3 +1290,9 @@ def test_uint64_inputs_are_reduced_before_the_cast():
     assert int(PAdicFlow(3, 2, [3], table_digits=1).flow(0, big)) == (2**64 - 1) % 9
     assert int(PAdicFlow(3, 2, [3]).flow(0, jnp.asarray(big))) == (2**64 - 1) % 9
     assert int(PAdicFlow(3, 60, [3]).flow(0, big)) == 2**64 - 1  # limbs
+
+
+def test_edge_inputs():
+    assert int(PAdicFlow(2, 1, [4]).flow(1, 1)) == 1  # x' = 4 is divisible by 4
+    with pytest.raises(ValueError, match="integer"):
+        PAdicFlow(3, 4, [3]).flow(0, np.array([1.5], dtype=object))

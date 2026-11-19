@@ -32,6 +32,7 @@ import time
 from functools import partial
 
 from galrax.padic.adelic import exact_zeros
+from galrax.padic.cli import run
 
 
 PRIMES = tuple(p for p in range(3, 200) if all(p % q for q in range(2, p)))
@@ -120,55 +121,6 @@ def solve(case, window=200, primes=8, cap=5000):
         if len(sets) == primes:
             break
     return result | {"seconds": time.perf_counter() - start}
-
-
-def _worker(connection, solver):
-    import galrax.padic  # noqa: F401  (imported before the clock starts)
-
-    connection.send("ready")
-    while True:
-        case = connection.recv()
-        if case is None:
-            return
-        try:
-            connection.send(solver(case))
-        except Exception as error:  # reported, not fatal for the run
-            connection.send({"order": case[0], "error": repr(error)})
-
-
-def run(cases, timeout, processes, solver=solve):
-    """`solver` on every case in worker processes; a case over `timeout` seconds is
-    killed and recorded as timed out.
-    """
-    pending, results = list(enumerate(cases)), []
-
-    def spawn():
-        parent, child = mp.Pipe()
-        process = mp.Process(target=_worker, args=(child, solver), daemon=True)
-        process.start()
-        return {"process": process, "pipe": parent, "task": None, "ready": False}
-
-    workers = [spawn() for _ in range(processes)]
-    while pending or any(w["task"] is not None for w in workers):
-        for w in workers:
-            pipe, task = w["pipe"], w["task"]
-            if not w["ready"]:
-                if pipe.poll():
-                    w["ready"] = pipe.recv() == "ready"
-            elif task is None and pending:
-                w["task"], w["since"] = pending.pop(), time.perf_counter()
-                pipe.send(w["task"][1])
-            elif task is not None and pipe.poll():
-                results.append(pipe.recv())
-                w["task"] = None
-            elif task is not None and time.perf_counter() - w["since"] > timeout:
-                w["process"].kill()
-                results.append({"order": task[1][0], "timeout": True})
-                w.update(spawn())
-        time.sleep(0.01)
-    for w in workers:
-        w["pipe"].send(None)
-    return results
 
 
 def main():

@@ -59,6 +59,8 @@ def complex_pair(r, u, cap=10**5, margin=10**6):
 
 
 def _attempt(P, k, u, cap, margin, prec):
+    if k < 2:
+        return None  # no complex pair
     roots = sorted((z for z, _ in P.complex_roots()), key=lambda z: -z.abs_upper().mid())
     top, rest = roots[:2], roots[2:]
     l = top[0] if top[0].imag > 0 else top[1]

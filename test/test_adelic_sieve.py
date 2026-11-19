@@ -129,3 +129,4 @@ def test_public_zero_sets():
     assert henon_zeros(1, [0, 0, 0], (0, 1), 0).period == 2
     with pytest.raises(ValueError):
         recurrence_zeros((1, 0), (1, 1))
+    assert recurrence_zeros((2,), (1,)).zeros == ()  # order 1: u_n = 2^n

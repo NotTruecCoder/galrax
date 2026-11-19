@@ -36,8 +36,8 @@ from galrax.padic.adelic import (
     stepper,
     window_zeros,
 )
+from galrax.padic.cli import run
 from nonlinear_skolem import exact_hits, make_cases
-from skolem import run
 
 
 # (1) recurrences, (2) quadratic maps, (3) Henon maps.
