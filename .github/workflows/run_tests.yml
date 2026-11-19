@@ -11,11 +11,14 @@ jobs:
       matrix:
         python-version: [ "3.11", "3.13" ]
         os: [ ubuntu-latest ]
+        include:
+          - python-version: "3.13"
+            os: windows-latest
       fail-fast: false
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install the latest version of uv
         uses: astral-sh/setup-uv@v7
