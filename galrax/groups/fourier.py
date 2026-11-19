@@ -1,5 +1,3 @@
-from collections import deque
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -206,37 +204,14 @@ class FourierTransform(AbstractFourierTransform):
         )
 
 
-class _SparseMatrix:
-    def __init__(self, matrix: np.ndarray, atol: float):
-        matrix = np.asarray(matrix, dtype=np.complex128)
-        rows, cols = np.nonzero(np.abs(matrix) > atol)
-        self.shape = matrix.shape
-        self.nnz = len(rows)
-        self.dense = matrix if self.nnz > matrix.size // 4 else None
-        self.rows = rows
-        self.cols = cols
-        self.vals = matrix[rows, cols]
-
-    def __matmul__(self, x):
-        if self.dense is not None:
-            return self.dense.astype(x.dtype) @ x
-        products = self.vals.astype(x.dtype)[:, None] * x[..., self.cols, :]
-        out = jnp.zeros(x.shape[:-2] + (self.shape[0], x.shape[-1]), dtype=x.dtype)
-        return out.at[..., self.rows, :].add(products)
-
-
 class _Level:
-    def __init__(self, elements, index, transversal, parents, factors, cosets):
+    def __init__(self, elements, index, transversal):
         self.elements = elements
         self.index = index
         self.transversal = transversal
-        self.parents = parents
-        self.factors = factors
-        self.cosets = cosets
         self.representations = []
         self.blocks = []
-        self.matrices = []
-        self.adjoints = []
+        self.plan = []
 
 
 def _check_chain(group: Group, chain) -> list[np.ndarray]:
@@ -254,54 +229,11 @@ def _check_chain(group: Group, chain) -> list[np.ndarray]:
     return chain
 
 
-def _generators(group: Group, chain) -> list[list[int]]:
-    generators = [[]]
-    for subgroup in chain[1:]:
-        current = list(generators[-1])
-        closure = subgroup_closure(group, current)
-        while len(closure) < len(subgroup):
-            current.append(int(np.setdiff1d(subgroup, closure)[0]))
-            closure = subgroup_closure(group, current)
-        generators.append(current)
-    return generators
-
-
-def _transversal_tree(group: Group, elements, subgroup, generators) -> _Level:
-    index = len(elements) // len(subgroup)
-    label = np.full(group.n, -1, dtype=np.int64)
-    label[elements] = group.kaili[np.ix_(elements, subgroup)].min(axis=1)
-    parent = {group.ed: None}
-    order = [group.ed]
-    representative = {label[group.ed]: group.ed}
-    queue = deque([group.ed])
-    while queue and len(representative) < index:
-        t = queue.popleft()
-        for u in generators:
-            s = int(group.kaili[t, u])
-            if s in parent:
-                continue
-            parent[s] = (t, u)
-            order.append(s)
-            queue.append(s)
-            representative.setdefault(label[s], s)
-    if len(representative) < index:
-        raise ValueError("Generators do not reach every coset.")
-
-    keep = set()
-    for s in representative.values():
-        while s is not None and s not in keep:
-            keep.add(s)
-            s = None if parent[s] is None else parent[s][0]
-    nodes = [s for s in order if s in keep]
-    node_index = {s: i for i, s in enumerate(nodes)}
-    is_representative = set(representative.values())
-    transversal = [s for s in nodes if s in is_representative]
-    coset_index = {s: j for j, s in enumerate(transversal)}
-
-    parents = np.array([-1] + [node_index[parent[s][0]] for s in nodes[1:]])
-    factors = np.array([-1] + [parent[s][1] for s in nodes[1:]])
-    cosets = np.array([coset_index.get(s, -1) for s in nodes])
-    return _Level(elements, index, np.array(transversal), parents, factors, cosets)
+def _transversal(group: Group, elements, subgroup) -> _Level:
+    # Each left coset t G_{i-1} is labelled by its smallest element.
+    labels = group.kaili[np.ix_(elements, subgroup)].min(axis=1)
+    transversal = np.unique(labels)
+    return _Level(elements, len(transversal), transversal)
 
 
 def _adapt(rep, restriction, sub_representations, atol):
@@ -356,11 +288,11 @@ class FastFourierTransform(AbstractFourierTransform):
     `fhat(rho) = sum_j rho(t_j) (+)_sigma fhat_j(sigma)`,
 
     where `fhat_j` is the transform over `G_{i-1}` of `f` restricted to the coset
-    `t_j G_{i-1}`. Each transversal element is a word in generators of `G_i`, and the
-    words form a tree, so the sum is evaluated by Horner's rule along the tree. The
-    matrices of generators lying in `G_{i-1}` are block diagonal, and are applied as
-    sparse matrices; for `S_n` with adjacent transpositions this is Clausen's
-    algorithm.
+    `t_j G_{i-1}`. On each level the transforms of all cosets sit in one array; the
+    block diagonal matrices are gathered from it at once for all representations of
+    the same degree, and multiplied by the stacked `rho(t_j)` in one `einsum`. The
+    compiled program thus has a few operations per level and degree, whatever the
+    number of representations.
 
     **Arguments:**
 
@@ -368,21 +300,20 @@ class FastFourierTransform(AbstractFourierTransform):
     - `chain`: a list of arrays of element numbers, strictly increasing subgroups from
         `{e}` to `G`. Defaults to `subgroup_chain(group)`.
     - `seed`: seed for computing irreducible representations.
-    - `atol`: tolerance for the checks of the adapted bases, and below which matrix
-        entries are treated as zero.
+    - `atol`: tolerance for the checks of the adapted bases.
     """
 
     def __init__(self, group: Group, chain=None, seed: int = 0, atol: float = 1e-8):
         chain = subgroup_chain(group) if chain is None else _check_chain(group, chain)
-        generators = _generators(group, chain)
         self.group = group
         self.chain = chain
         self.levels = []
 
         previous = [np.ones((1, 1, 1), dtype=np.complex128)]
+        offsets = [0]
         for i in range(1, len(chain)):
             elements, subgroup = chain[i], chain[i - 1]
-            level = _transversal_tree(group, elements, subgroup, generators[i])
+            level = _transversal(group, elements, subgroup)
             local = np.full(group.n, -1, dtype=np.int64)
             local[elements] = np.arange(len(elements))
             if len(elements) == group.n:
@@ -390,23 +321,15 @@ class FastFourierTransform(AbstractFourierTransform):
             else:
                 table = local[group.kaili[np.ix_(elements, elements)]]
                 reps = Group(table, check=False).irreducible_representations(seed)
-            factors = set(level.factors[1:].tolist())
             for rep in reps:
                 adapted, blocks = _adapt(rep, local[subgroup], previous, atol)
                 level.representations.append(adapted)
                 level.blocks.append(blocks)
-                level.matrices.append(
-                    {u: _SparseMatrix(adapted[local[u]], atol) for u in factors}
-                )
-                level.adjoints.append(
-                    {
-                        u: _SparseMatrix(adapted[local[u]].conj().T, atol)
-                        for u in factors
-                    }
-                )
+            offsets = self._plan(level, local, previous, offsets)
             self.levels.append(level)
             previous = level.representations
         self.representations = previous
+        self.offsets = offsets
 
         order = np.array([group.ed])
         for level in reversed(self.levels):
@@ -416,93 +339,89 @@ class FastFourierTransform(AbstractFourierTransform):
         self.order = order
         self.unorder = np.argsort(order)
 
+    @staticmethod
+    def _plan(level, local, previous, offsets) -> list[int]:
+        """Fill `level.plan` with `(d, R, I)` per degree `d`: `R[r, j] = rho_r(t_j)`
+        and `I[r]`, the positions in the previous level's array of the entries of the
+        block diagonal matrix of `rho_r` (`m`, a zero, off the blocks). Returns the
+        offsets of the representations in this level's array.
+        """
+        m = sum(rep.shape[1] ** 2 for rep in previous)
+        degrees = [rep.shape[1] for rep in level.representations]
+        new_offsets = [0] * len(degrees)
+        position = 0
+        for d in dict.fromkeys(degrees):
+            chosen = [r for r, e in enumerate(degrees) if e == d]
+            R = np.stack(
+                [level.representations[r][local[level.transversal]] for r in chosen]
+            )
+            I = np.full((len(chosen), d, d), m, dtype=np.int64)
+            for row, r in enumerate(chosen):
+                for index, offset, e in level.blocks[r]:
+                    entries = offsets[index] + np.arange(e * e).reshape(e, e)
+                    I[row, offset : offset + e, offset : offset + e] = entries
+                new_offsets[r] = position + row * d * d
+            level.plan.append((d, R, I))
+            position += len(chosen) * d * d
+        return new_offsets
+
     def operation_count(self) -> int:
         """Number of complex multiplications in one forward transform."""
         count = 0
         cosets = self.group.n
         for level in self.levels:
             cosets //= level.index
-            for matrices, rep in zip(level.matrices, level.representations):
-                d = rep.shape[1]
-                for u in level.factors[1:].tolist():
-                    count += cosets * matrices[u].nnz * d
+            for d, R, _ in level.plan:
+                count += cosets * R.shape[0] * level.index * d**3
         return count
 
     def forward(self, f) -> list:
         f = self._check_function(f)
         batch = f.shape[:-1]
         n = self.group.n
-        x = f.reshape(-1, n)[:, self.order]
-        data = [x.reshape(x.shape[0], n, 1, 1)]
+        x = f.reshape(-1, n)[:, self.order].reshape(-1, n, 1)
         for level in self.levels:
-            pieces = [
-                p.reshape(p.shape[0], -1, level.index, *p.shape[2:]) for p in data
-            ]
-            data = []
-            for rep, blocks, matrices in zip(
-                level.representations, level.blocks, level.matrices
-            ):
-                d = rep.shape[1]
-                stacked = jnp.zeros(pieces[0].shape[:3] + (d, d), dtype=f.dtype)
-                for index, offset, e in blocks:
-                    stacked = stacked.at[
-                        ..., offset : offset + e, offset : offset + e
-                    ].set(pieces[index])
-                sums = [None] * len(level.parents)
-                for node in reversed(range(len(level.parents))):
-                    total = sums[node]
-                    coset = level.cosets[node]
-                    if coset >= 0:
-                        term = stacked[:, :, coset]
-                        total = term if total is None else total + term
-                    if node == 0:
-                        data.append(total)
-                    else:
-                        term = matrices[int(level.factors[node])] @ total
-                        parent = level.parents[node]
-                        sums[parent] = (
-                            term if sums[parent] is None else sums[parent] + term
-                        )
-        return [a.reshape(batch + a.shape[-2:]) for a in data]
+            b, c, m = x.shape
+            x = x.reshape(b, c // level.index, level.index, m)
+            x = jnp.concatenate([x, jnp.zeros_like(x[..., :1])], axis=-1)
+            pieces = []
+            for d, R, I in level.plan:
+                blocks = x[..., I]
+                out = jnp.einsum("rjab,xcjrbd->xcrad", R.astype(x.dtype), blocks)
+                pieces.append(out.reshape(out.shape[:2] + (-1,)))
+            x = jnp.concatenate(pieces, axis=-1)
+        x = x.reshape(batch + (n,))
+        return [
+            x[..., o : o + d * d].reshape(batch + (d, d))
+            for o, d in zip(self.offsets, self.degrees)
+        ]
 
     def inverse(self, fhat):
         fhat = self._check_transform(fhat)
         batch = fhat[0].shape[:-2]
         n = self.group.n
-        dtype = fhat[0].dtype
-        data = [(a.shape[-1] / n) * a.reshape(-1, 1, *a.shape[-2:]) for a in fhat]
+        order = np.argsort(self.offsets)
+        x = jnp.concatenate(
+            [
+                (fhat[r].shape[-1] / n) * fhat[r].reshape(-1, 1, fhat[r].shape[-1] ** 2)
+                for r in order
+            ],
+            axis=-1,
+        )
         for i in reversed(range(len(self.levels))):
             level = self.levels[i]
-            below = (
-                self.levels[i - 1].representations if i > 0 else [np.ones((1, 1, 1))]
-            )
-            size = data[0].shape[:2]
-            pieces = [
-                jnp.zeros(size + (level.index, r.shape[1], r.shape[1]), dtype=dtype)
-                for r in below
-            ]
-            for a, blocks, adjoints in zip(data, level.blocks, level.adjoints):
-                values = [None] * len(level.parents)
-                for node in range(len(level.parents)):
-                    if node == 0:
-                        values[node] = a
-                    else:
-                        values[node] = (
-                            adjoints[int(level.factors[node])]
-                            @ values[level.parents[node]]
-                        )
-                    coset = level.cosets[node]
-                    if coset >= 0:
-                        for index, offset, e in blocks:
-                            pieces[index] = (
-                                pieces[index]
-                                .at[:, :, coset]
-                                .add(
-                                    values[node][
-                                        ..., offset : offset + e, offset : offset + e
-                                    ]
-                                )
-                            )
-            data = [p.reshape(p.shape[0], -1, *p.shape[3:]) for p in pieces]
-        x = data[0].reshape(-1, n)
+            m = len(self.levels[i - 1].elements) if i > 0 else 1
+            b, c, _ = x.shape
+            prev = jnp.zeros((b, c, level.index, m + 1), dtype=x.dtype)
+            position = 0
+            for d, R, I in level.plan:
+                size = R.shape[0] * d * d
+                a = x[..., position : position + size].reshape(b, c, -1, d, d)
+                values = jnp.einsum("rjba,xcrbd->xcjrad", R.conj().astype(x.dtype), a)
+                prev = prev.at[..., I.reshape(-1)].add(
+                    values.reshape(b, c, level.index, -1)
+                )
+                position += size
+            x = prev[..., :m].reshape(b, c * level.index, m)
+        x = x.reshape(-1, n)
         return x[:, self.unorder].reshape(batch + (n,))
