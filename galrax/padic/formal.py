@@ -573,8 +573,34 @@ def disc_differentials(f, p: int, point, n: int) -> tuple[list, list]:
     return x, [2 * p * c for c in _inverse(_compose(df, x, n), n)]
 
 
+def _model(f, p: int, point, end=None):
+    """`(f, point, end, flipped)`, with a point at infinity moved to `X = 0` of
+    `Y^2 = X^{2g+2} f(1/X)`, `x = 1/X`, `y = Y / X^{g+1}`; there
+    `x^k dx / y = -X^{g-1-k} dX / Y`, so the integrals come back reversed and negated.
+    `"infinity"` is the point of an odd-degree model, `("infinity", c)` the one with
+    `y / x^{g+1} -> c` (`c^2` the leading coefficient) of an even-degree model.
+    """
+    if point == "infinity":
+        point = ("infinity", 0)
+    if not (isinstance(point, tuple) and point and point[0] == "infinity"):
+        return f, point, end, False
+    if _valuation(Fraction(next(c for c in reversed(f) if c)), p) != 0:
+        raise ValueError(
+            "The disc at infinity needs p prime to the leading coefficient"
+        )
+    genus = (len(f) - 2) // 2
+    f = (list(f) + [0] * (2 * genus + 3 - len(f)))[::-1]
+    if end is not None:
+        x, y = (Fraction(v) for v in end)
+        if x == 0:
+            raise ValueError("The points are not in the same residue disc.")
+        end = (1 / x, y / x ** (genus + 1))
+    return f, (0, point[1]), end, True
+
+
 def _tiny(f, p: int, point, n: int) -> list[list]:
     """`int_{P_0}^{P(s)} x^k dx / y`, `k < g`, as series in `s`."""
+    f, point, _, flipped = _model(f, p, point)
     genus = (len(f) - 2) // 2
     x, w = disc_differentials(f, p, point, n)
     out, power = [], [Fraction(1)] + [Fraction(0)] * (n - 1)
@@ -582,7 +608,7 @@ def _tiny(f, p: int, point, n: int) -> list[list]:
         integrand = _multiply(power, w, n)
         out.append([Fraction(0)] + [c / (m + 1) for m, c in enumerate(integrand[:-1])])
         power = _multiply(power, x, n)
-    return out
+    return [[-c for c in series] for series in out[::-1]] if flipped else out
 
 
 def _parameter(p: int, start, end) -> Fraction:
@@ -596,9 +622,11 @@ def _parameter(p: int, start, end) -> Fraction:
 def tiny_integrals(f, p: int, precision: int, start, end) -> list[int]:
     """`int_start^end x^k dx / y`, `k < g`, modulo `p^precision`, for rational points
     in the same residue disc: the logarithm on the Jacobian of `[end - start]`.
+    `start` may be a point at infinity, as in `chabauty_zeros`.
     """
     m, n = p**precision, 2 * precision + 8
-    s = _residue(_parameter(p, start, end), m)
+    _, base, moved, _ = _model(f, p, start, end)
+    s = _residue(_parameter(p, base, moved), m)
     return [
         sum(_residue(c, m) * pow(s, k, m) for k, c in enumerate(series)) % m
         for series in _tiny(f, p, start, n)
@@ -612,6 +640,12 @@ def chabauty_zeros(f, p: int, precision: int, point, annihilator) -> EventSet:
     the content, `zero_bound` is Strassmann's bound, which counts the zeros when
     the balls isolate them. With `omega` killing the Mordell--Weil group, every
     rational point of the disc is among the zeros.
+
+    `point` may be at infinity: `"infinity"` for an odd-degree model, or
+    `("infinity", c)` with `c^2` the leading coefficient for an even-degree one. The
+    disc is then that of `(0, c)` on `Y^2 = X^{2g+2} f(1/X)`, `X = 1/x`,
+    `Y = y / x^{g+1}`, and `s` its parameter there; this needs `p` prime to the
+    leading coefficient.
     """
     m, n = p**precision, 2 * precision + 8
     total = [0] * n

@@ -181,6 +181,7 @@ f = [0, 60, -112, 65, -14, 1]
 ell = pf.tiny_integrals(f, 7, 8, (3, 6), (10, -120))
 zeros = pf.chabauty_zeros(f, 7, 8, (3, 6), (ell[1], -ell[0]))
 print(zeros.zero_bound)  # 2
+print(pf.chabauty_zeros(f, 7, 8, "infinity", (ell[1], -ell[0])).zero_bound)  # 1: infinity
 ```
 
 ### The Skolem problem: zero sets of integer orbits
@@ -408,7 +409,7 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 - Beyond 62 bits, results come back as Python integers and the call cannot be traced by `jit` as a whole.
 - Events, equilibria, linearisation, maps and the Smith forms of the normal form run on the host, sequentially.
 - `Orbit`, `recurrence_times`, `matrix_power_index` and the jump-ahead of `PAdicMap` go through a flow only without attracting directions ($Dg^L$ invertible modulo $p$ on the cycle). Otherwise the orbit modulo $p^K$ is read exactly, up to `EXACT_CAP` $= 2 \cdot 10^5$ points: no `flow`, $n \ge 0$ unless the start is periodic modulo $p^K$, and a class holds no exact zero only when its point misses the event modulo $p^K$. On a mixed $Dg^L$ the cycle grows with $K$.
-- `chabauty_zeros` works in finite residue discs of an odd-degree or even-degree model with good reduction at odd $p$; the disc at infinity needs a change of model.
+- `chabauty_zeros` works in the residue discs of an odd-degree or even-degree model with good reduction at odd $p$, the disc at infinity included (`"infinity"`, or `("infinity", c)` for even degree), which needs $p$ prime to the leading coefficient.
 - Analytic fields need a lower bound on the valuations of their coefficients; a wrong bound is not detected.
 - Queries that have no answer raise instead of returning a guess: `rectify` for a point outside the flow box (an error at run time under `jit`), `Linearization.orbit_time` for a point off the orbit, `MinimalAction` when the displacements are not a basis.
 - The elliptic case of `height_bound` needs upper bounds for the Néron–Tate Gram matrix and for $h - \hat h$ from the user.

@@ -142,6 +142,27 @@ def test_chabauty_counts_the_rational_points_of_a_genus_two_curve():
         [0] + f[:0:-1], q, digits, (0, 0), (-killing[1], -killing[0])
     )
     assert at_infinity.zero_bound == len(at_infinity.balls) == 1
+    assert chabauty_zeros(f, q, digits, "infinity", killing) == at_infinity
     assert total + 1 == 10
     with pytest.raises(ValueError, match="same residue disc"):
         tiny_integrals(f, q, digits, (3, 6), (10, 120))
+
+
+def test_chabauty_in_the_disc_at_infinity():
+    # y^2 = x^5 + 7^10 + 2 has P = (1/49, (7^10 + 1)/7^5), in the disc of infinity at
+    # 7. The differential killing [P - infinity] vanishes at infinity, P and -P; there
+    # Y = y/x^3 = 7 s gives s = 0 and s = +-(7^10 + 1).
+    c, q, digits = 7**10 + 1, 7, 8
+    f = [c + 1, 0, 0, 0, 0, 1]
+    P = (Fraction(1, 49), Fraction(c, 7**5))
+    ell = tiny_integrals(f, q, digits, "infinity", P)
+    zeros = chabauty_zeros(f, q, digits, "infinity", (ell[1], -ell[0]))
+    assert all(s in zeros for s in (0, c, -c)) and zeros.zero_bound >= 3
+    # Even degree: y^2 = x^6 + x, good at 7, with y/x^3 -> 1 at one point at infinity.
+    even = [0, 1, 0, 0, 0, 0, 1]
+    found = chabauty_zeros(even, q, 6, ("infinity", 1), (1, 0))
+    assert 0 in found and found.zero_bound is not None
+    with pytest.raises(ValueError, match="leading coefficient"):
+        chabauty_zeros([1, 0, 0, 0, 0, 7], q, digits, "infinity", (1, 0))
+    with pytest.raises(ValueError, match="not on the curve"):
+        chabauty_zeros(even, q, 6, ("infinity", 2), (1, 0))
