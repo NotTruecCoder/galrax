@@ -60,3 +60,15 @@ def test_sage_inputs():
     assert charpoly_to_r(PolynomialRing(ZZ, "t")([-1, -1, 1])) == (1, 1)
     F = [{(1, 0): 1, (0, 0): 1}, {(0, 1): 2}]
     assert loop_exit(F, (0, 1), y - 2 * x - 22) == 5
+
+
+def test_exit_found_without_a_certificate():
+    # (i, s) -> (i + 1, s + i): s_n = n (n - 1) / 2 = 10 at n = 5 and at n = -4, which
+    # the forward count cannot exclude; the exact search still gives the exit
+    F = [{(0, 0): 1, (1, 0): 1}, {(0, 1): 1, (1, 0): 1}]
+    guard = {(0, 1): 1, (0, 0): -10}
+    assert loop_exit(F, (0, 0), guard) == 5
+    found = hypersurface_times(F, (0, 0), guard)
+    assert not found.certified and found.known == (5,) and found.searched >= 120
+    found = recurrence_zeros((1, 1), (2, 3))
+    assert found.known == found.zeros == (-3,) and found.searched == 200

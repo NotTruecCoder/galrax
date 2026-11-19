@@ -432,7 +432,8 @@ def certify(F, step, x0, condition, zeros_in, window, *, back=None, invertible,
     `records` are records found beforehand (the real place). `mode` is `"abs"`, or
     `"sieve"` for Strassmann at etale primes only. Returns a dict with `certified`,
     and when certified the `zeros` and the record types that settle them (`by`), plus
-    the primes used and the `records`; `condition` is `g` or a target (`as_condition`);
+    the primes used and the `records`; `known` are the exact zeros with `|n| <=
+    searched`, certified or not. `condition` is `g` or a target (`as_condition`);
     `label` tags the internal soundness checks.
     """
     records, condition = list(records), as_condition(condition, len(x0))
@@ -487,6 +488,7 @@ def certify(F, step, x0, condition, zeros_in, window, *, back=None, invertible,
                 records.append(rec)
     result["primes"] = sorted({r["p"] for r in records if r["p"]})
     result["records"] = records
+    result["known"], result["searched"] = (zeros, seen) if zeros is not None else ([], None)
     return result
 
 
@@ -494,7 +496,8 @@ def certify(F, step, x0, condition, zeros_in, window, *, back=None, invertible,
 class ZeroSet:
     """A zero set found by ABS. When `certified`, the times are exactly `zeros`, or,
     for a periodic orbit, `zeros + period Z` with `zeros` in `[0, period)`; `by` names
-    the records that settle it and `primes` the primes used.
+    the records that settle it and `primes` the primes used. Certified or not, `known`
+    are the exact zeros with `|n| <= searched` (`0 <= n` for maps), found in integers.
     """
 
     certified: bool
@@ -503,11 +506,14 @@ class ZeroSet:
     by: str | None = None
     primes: tuple = ()
     records: tuple = dataclasses.field(default=(), compare=False, repr=False)
+    known: tuple = dataclasses.field(default=(), compare=False, repr=False)
+    searched: int | None = dataclasses.field(default=None, compare=False, repr=False)
 
 
 def _zero_set(found) -> ZeroSet:
     return ZeroSet(found["certified"], tuple(found.get("zeros", ())), None,
-                   found.get("by"), tuple(found["primes"]), tuple(found["records"]))
+                   found.get("by"), tuple(found["primes"]), tuple(found["records"]),
+                   tuple(found["known"]), found["searched"])
 
 
 def recurrence_zeros(r, u=None, *, primes=8, depth_below=50, window=200,

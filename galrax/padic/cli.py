@@ -5,14 +5,17 @@
     galrax-abs henon --c 1 --P 0,0,1 --start 0,1 --target 7
     galrax-abs tpls mfcs.tpls [--timeout 30 --jobs 4]
 
-Exit codes: 0 certified (every instance, for `tpls`), 3 not, 2 bad input. A first
-argument that starts with `-` goes after `--`: `galrax-abs rec -- -1,1 0,1`.
+Polynomials are written with integers, `+ - *` and `**` to a constant power, in the
+variables of `--vars` (default `x`, or `x,y`, `x,y,z`, `x0,...` by the number of
+polynomials); a condition may be an equation, `"x == y + 1"`. Exit codes: 0 certified
+(every instance, for `tpls`), 3 not, 2 bad input.
 """
 
 import argparse
 import ast
 import json
 import multiprocessing as mp
+import re
 import sys
 import time
 from functools import partial
@@ -72,9 +75,10 @@ def run(cases, timeout, processes, solver):
 
 # Expressions: a whitelist of the AST, never `eval` (the input is untrusted).
 
-def parse_poly(text, names):
+def parse_poly(text, names, equation=False):
     """`{exponents: coefficient}` of an integer polynomial in `names`, written with
-    integers, `+ - *` and `**` to a constant power; anything else is a `ValueError`."""
+    integers, `+ - *` and `**` to a constant power; anything else is a `ValueError`.
+    With `equation`, `a == b` stands for `a - b`."""
     d = len(names)
 
     def add(a, b, sign=1):
@@ -119,7 +123,19 @@ def parse_poly(text, names):
         tree = ast.parse(text, mode="eval")
     except SyntaxError as error:
         raise ValueError(f"cannot parse {text!r}") from error
-    return walk(tree.body)
+    body = tree.body
+    if (equation and isinstance(body, ast.Compare) and len(body.ops) == 1
+            and isinstance(body.ops[0], ast.Eq)):
+        return add(walk(body.left), walk(body.comparators[0]), -1)
+    return walk(body)
+
+
+def _names(given, count):
+    if given:
+        return [v.strip() for v in given.split(",")]
+    if count == 1:
+        return ["x"]
+    return list("xyz"[:count]) if count <= 3 else [f"x{i}" for i in range(count)]
 
 
 def _ints(text):
@@ -132,7 +148,8 @@ def _ints(text):
 def _record(found, seconds, certificate):
     out = {"certified": found.certified, "zeros": list(found.zeros),
            "period": found.period, "by": found.by, "primes": list(found.primes),
-           "seconds": round(seconds, 4)}
+           "seconds": round(seconds, 4), "known": list(found.known),
+           "searched": found.searched}
     if certificate:
         keys = ("p", "k", "type", "T", "cover", "sides")
         out["records"] = [{key: r.get(key) for key in keys} for r in found.records]
@@ -161,7 +178,9 @@ def _show(found, seconds, args, where):
                 zeros += f" + {found.period}Z"
             print(f"certified: {where}: {zeros}, by {found.by}")
         else:
-            print("not certified")
+            known = "{" + ", ".join(map(str, found.known)) + "}"
+            span = "|n|" if where.startswith("n in Z") else "0 <= n"
+            print(f"not certified; exact zeros with {span} <= {found.searched}: {known}")
         print(f"primes: {list(found.primes)}; {seconds:.2f} s")
         if args.certificate:
             for r in found.records:
@@ -175,7 +194,11 @@ def main(argv=None):
     import jax
 
     jax.config.update("jax_enable_x64", True)
-    parser = argparse.ArgumentParser(prog="galrax-abs", description=__doc__.split("\n")[0])
+    from galrax import __version__
+
+    parser = argparse.ArgumentParser(prog="galrax-abs", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--version", action="version", version=__version__)
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--json", action="store_true", help="one JSON object")
     common.add_argument("--certificate", action="store_true",
@@ -190,11 +213,11 @@ def main(argv=None):
 
     m = sub.add_parser("map", parents=[common], help="n >= 0 with x_n = target or g(x_n) = 0")
     m.add_argument("F", nargs="+", help="one polynomial per coordinate")
-    m.add_argument("--vars", default="x")
+    m.add_argument("--vars", help="variable names, comma separated")
     m.add_argument("--start", type=_ints, required=True)
     goal = m.add_mutually_exclusive_group(required=True)
     goal.add_argument("--target", type=int, help="x_n = TARGET, x the first coordinate")
-    goal.add_argument("--until", metavar="G", help="g(x_n) = 0")
+    goal.add_argument("--until", metavar="G", help='g(x_n) = 0, or an equation "a == b"')
 
     h = sub.add_parser("henon", parents=[common], help="n in Z with x_n = target, Henon maps")
     h.add_argument("--c", type=int, required=True, choices=(1, -1))
@@ -208,6 +231,9 @@ def main(argv=None):
     t.add_argument("--jobs", type=int, default=1)
     t.add_argument("--certificate", action="store_true")
 
+    # "-1,2" is not a negative number to argparse; a leading space keeps it a value
+    argv = sys.argv[1:] if argv is None else list(argv)
+    argv = [" " + a if re.fullmatch(r"-\d+(,\s*-?\d+)+", a) else a for a in argv]
     args = parser.parse_args(argv)
     if args.command in ("rec", "tpls"):
         try:
@@ -238,10 +264,16 @@ def main(argv=None):
             found = value_times(args.r, args.u, args.value)
             where = f"n in Z with u_n = {args.value}"
         elif args.command == "henon":
-            found = henon_zeros(args.c, args.P, args.start, args.target)
+            if len(args.start) != 2:
+                parser.error("--start needs two values x,y")
+            try:
+                found = henon_zeros(args.c, args.P, args.start, args.target)
+            except RuntimeError as error:  # the orbit does not escape within the cap
+                print(f"not certified: {error}")
+                return 3
             where = f"n in Z with x_n = {args.target}"
         else:
-            names = [v.strip() for v in args.vars.split(",")]
+            names = _names(args.vars, len(args.F))
             if len(names) != len(args.F) or len(names) != len(args.start):
                 parser.error("need one polynomial and one start value per variable")
             F = [parse_poly(f, names) for f in args.F]
@@ -249,8 +281,9 @@ def main(argv=None):
                 found = map_zeros(F, args.start, args.target)
                 where = f"n >= 0 with {names[0]}_n = {args.target}"
             else:
-                found = hypersurface_times(F, args.start, parse_poly(args.until, names))
-                where = f"n >= 0 with {args.until} = 0"
+                g = parse_poly(args.until, names, equation=True)
+                found = hypersurface_times(F, args.start, g)
+                where = f"n >= 0 with {args.until}" + ("" if "==" in args.until else " = 0")
     except ValueError as error:
         parser.error(str(error))
     return _show(found, time.perf_counter() - began, args, where)

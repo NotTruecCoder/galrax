@@ -12,8 +12,8 @@ set with the given terms from `from` on.
 
     python benchmarks/oeis.py --count 300 --max-order 6 --timeout 30 --jobs 4 > oeis.csv
 
-Interesting rows (finite non-empty sets past `from`, and any `check` mismatch) are
-summarised on stderr.
+Interesting rows (a zero past the initial values, and any `check` mismatch) are
+summarised on stderr; an interrupted download resumes from the cache.
 """
 
 import argparse
@@ -139,15 +139,15 @@ def main():
         a, c = case[0], case[3]
         first, given = meta[a]
         if not row.get("certified"):
-            writer.writerow([a, c, False, "", first, row.get("error") or
-                             ("timeout" if row.get("timeout") else ""), "", ""])
+            why = row.get("error") or ("timeout" if row.get("timeout") else "not certified")
+            writer.writerow([a, c, False, "", first, why, "", ""])
             continue
         zeros = [n + first for n in row["zeros"]]
         seen = [first + i for i, v in enumerate(given) if v == c]
         check = "ok" if seen == [z for z in zeros if first <= z < first + len(given)] else "MISMATCH"
         writer.writerow([a, c, True, " ".join(map(str, zeros)), first, row["by"],
                          f"{row['seconds']:.3f}", check])
-        if check != "ok" or any(z >= first for z in zeros):
+        if check != "ok" or any(z >= first + len(case[1]) for z in zeros):  # past u_0..u_{k-1}
             interesting.append(f"{a} a(n) = {c}: {zeros} (from {first}) {check}")
 
     done = sum(1 for r in results if r.get("certified"))

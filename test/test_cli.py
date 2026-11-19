@@ -12,6 +12,8 @@ def test_rec(capsys):
     assert out["certified"] and out["zeros"] == [-3, 3]
     assert main(["rec", "1,1", "0,1", "--certificate"]) == 0
     assert "certified: n in Z with u_n = 0: {0}" in capsys.readouterr().out
+    assert main(["rec", "-1,1", "0,1", "--value", "1"]) == 0  # no "--" needed
+    assert "{-2, -1, 1}" in capsys.readouterr().out
 
 
 def test_map_and_henon(capsys):
@@ -42,3 +44,20 @@ def test_expressions_are_whitelisted():
     with pytest.raises(SystemExit) as error:
         main(["map", "__import__('os')", "--start", "1", "--target", "0"])
     assert error.value.code == 2
+
+
+def test_convenience(capsys):
+    from galrax import __version__
+
+    with pytest.raises(SystemExit):
+        main(["--version"])
+    assert __version__ in capsys.readouterr().out
+    # a negative first value, default variables, an equation
+    assert main(["henon", "--c", "-1", "--P", "-1,0,1", "--start", "0,1", "--target", "3"]) == 0
+    assert "{-2, 4}" in capsys.readouterr().out
+    assert main(["map", "y", "x*y + 1", "--start", "1,1", "--until", "x == 7", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["zeros"] == [4]
+    # not certified: the exact zeros found are still reported
+    assert main(["map", "i + 1", "s + i", "--vars", "i,s", "--start", "0,0",
+                 "--until", "s == 10"]) == 3
+    assert "0 <= n <= 120: {5}" in capsys.readouterr().out

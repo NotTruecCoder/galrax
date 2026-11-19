@@ -4,7 +4,15 @@ hypersurface along an orbit (DML), and the exit time of a polynomial loop.
 Not covered: `u_n = v_m` (two indices, not one orbit), positivity, `x_n = x_m`.
 """
 
-from .adelic import orbit_zeros, recurrence_zeros, ZeroSet
+from .adelic import (
+    as_condition,
+    as_poly,
+    orbit_zeros,
+    recurrence_zeros,
+    stepper,
+    window_zeros,
+    ZeroSet,
+)
 
 
 def charpoly_to_r(P):
@@ -41,8 +49,14 @@ def hypersurface_times(F, x0, g, **kwargs) -> ZeroSet:
 
 def loop_exit(F, x0, guard, **kwargs):
     """The number of steps of `while guard(x) != 0: x = F(x)` from `x0`, or `None`
-    when the loop is certified never to exit; `RuntimeError` when ABS cannot tell."""
+    when the loop is certified never to exit; `RuntimeError` when ABS cannot tell.
+    An exit found by the exact search is the answer even without a certificate."""
+    d = len(x0)
+    hits = window_zeros(stepper([as_poly(f, d) for f in F]), [int(v) for v in x0],
+                        as_condition(guard, d), kwargs.get("window", 120))
+    if hits:  # exact: the loop is run, and stops there
+        return hits[0]
     found = hypersurface_times(F, x0, guard, **kwargs)
-    if not found.certified:
-        raise RuntimeError("not certified")
-    return min(found.zeros, default=None)
+    if found.known or found.certified:
+        return min(found.known or found.zeros, default=None)
+    raise RuntimeError(f"not certified; no exit in 0..{found.searched}")

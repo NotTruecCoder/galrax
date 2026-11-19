@@ -190,6 +190,25 @@ pf.recurrence_zeros([2, -4, 4], [0, 0, 1])
 # ZeroSet(certified=True, zeros=(0, 1, 4, 6, 13, 52), period=None, by='real / real', primes=())
 ```
 
+The condition can be any integer polynomial $g$ of the coordinates, $g(x_n) = 0$ (`hypersurface_times`), and a few questions reduce to one zero set: `value_times` (every $n$ with $u_n = c$, through the recurrence of $(x - 1)P(x)$), `loop_exit` (the exit step of `while g(x) != 0: x = F(x)`, or `None` when it is certified never to exit), `charpoly_to_r`. Polynomials can be dicts `{exponents: coefficient}` or Sage polynomials, and `recurrence_zeros` takes a Sage `BinaryRecurrenceSequence`; Sage itself is never imported. A `ZeroSet` also keeps the exact zeros found by the search (`known`, up to `searched`), certified or not, and the `records` of the certificate.
+
+```python
+pf.value_times([1, 1], [0, 1], 2).zeros  # F_n = 2
+# (-3, 3)
+pf.loop_exit([{(1, 0): 1, (0, 0): 1}, {(0, 1): 2}], (0, 1), {(0, 1): 1, (0, 0): -48})
+# None: (i, x) -> (i + 1, 2x) from (0, 1) never reaches x = 48
+```
+
+The same from the shell, after `pip install`; `--json` gives one JSON object, `--certificate` the records (prime, depth, type, tail, cover), and the exit code is 0 when certified, 3 when not, 2 on bad input:
+
+```bash
+galrax-abs rec 1,1 0,1 --value 2
+# certified: n in Z with u_n = 2: {-3, 3}, by real / real
+galrax-abs map "i + 1" "2*x" --vars i,x --start 0,1 --until "x == 2*i + 22"
+# certified: n >= 0 with x == 2*i + 22: {5}, by etale
+galrax-abs tpls mfcs.tpls --timeout 30 --jobs 4 > zeros.jsonl  # (k, r, u) per line
+```
+
 On 900 instances of the data set of the SKOLEM tool (Bilu, Luca, Nieuwveld, Ouaknine, Purser, Worrell, MFCS 2022), on the same laptop, ABS certifies 899 in 0.15 s on average, SKOLEM 890 with Baker–Davenport and 404 with Leapfrogging, and no tool gave a wrong zero set. Both rest on the same Baker–Davenport argument for recurrences; ABS's own contribution is for maps, where no such argument exists: on orbits of random quadratic maps of $\mathbb{Z}^3$ it certifies 93 of 100, against 1 for the étale sieve alone. The settings, all tables and the history of the parameters are in [`benchmarks/README.md`](benchmarks/README.md).
 
 ### Speed
@@ -348,6 +367,7 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 | `PAdicMap`, `Cycle`, `Component` | Discrete maps: cycle trees, minimal decompositions, minimality; `iterate` ($T^n$ for large, negative or $p$-adic $n$, or an array of $n$), `index`, `period`, `hitting_times` of a loop; polynomial maps of $\mathbb{Z}_p^d$ through `Orbit`. |
 | `Orbit(p, precision, g, x)` | The orbit of a point under a polynomial map of $\mathbb{Z}_p^d$, without attracting directions: $x_n$ for arrays of $n$, `times` of an event (classes modulo $M p^k$ and Strassmann's bound), `index`. |
 | `recurrence_zeros`, `map_zeros`, `henon_zeros`, `ZeroSet` | Certified zero sets over $\mathbb{Z}$ of integer recurrences and orbits, by ABS (`galrax.padic.adelic`). |
+| `value_times`, `hypersurface_times`, `loop_exit`, `charpoly_to_r` | $u_n = c$, $g(x_n) = 0$ and the exit step of a polynomial loop, by ABS; the command `galrax-abs`. |
 | `recurrence_times`, `companion`, `linear` | Zeros of linear recurrences through the companion matrix; linear maps. |
 | `matrix_power_index` | The first $n$ with $(M^n v)_i = y \bmod p^K$: degrees of Chebyshev, Lucas and Dickson sequences. |
 | `lie_bracket`, `commutator` | $[X, Y]$ of two fields, and $g h g^{-1} h^{-1}$ of two maps congruent to the identity. |
