@@ -32,12 +32,10 @@ What it can do:
 - **Scan for minimal actions on surfaces.** `examples/lattice_scan.py` certifies minimal actions of the Vieta involutions on the four-holed sphere family $x^2 + y^2 + z^2 + xyz = ax + by + cz + d$.
 - **Train invertible $p$-adic layers.** `examples/padic_layer.py`: the time-one map of a polynomial field is an exactly invertible layer, fitted digit by digit through linear systems modulo $p$, without gradients.
 
-The methods are described in the preprint *Exact flows and normal forms of differential equations over the $p$-adic integers* (K. Terskii, in preparation).
-
 ## Installation
 
 ```bash
-pip install git+https://github.com/NotTruecCoder/galrax.git
+pip install galrax          # or galrax[abs] for the real place of recurrences, galrax[plot] for pictures
 ```
 
 You need Python 3.11+ and JAX; `diffrax` (0.7.x) is installed as a dependency. The $p$-adic code needs 64-bit integers: call `jax.config.update("jax_enable_x64", True)` first.
@@ -182,7 +180,7 @@ print(zeros.zero_bound)  # 2
 
 ### The Skolem problem: zero sets of integer orbits
 
-`recurrence_zeros`, `map_zeros` and `henon_zeros` certify the set of times $n$ with $u_n = 0$, or with $x_n =$ target, for an integer orbit. They run ABS (`galrax.padic.adelic`), a sieve over all places: Strassmann's bound at étale primes, the exact orbit modulo $p^k$ at the singular ones, and at the real place the escape filtration of Hénon maps or, for recurrences, a dominant root, Baker–Davenport for a dominant complex pair, or an invariant cone. The real place of recurrences needs `python-flint`.
+`recurrence_zeros`, `map_zeros` and `henon_zeros` certify the set of times $n$ with $u_n = 0$, or with $x_n =$ target, for an integer orbit. They run ABS (`galrax.padic.adelic`), a sieve over all places: Strassmann's bound at étale primes, the exact orbit modulo $p^k$ at the singular ones, and at the real place the escape filtration of Hénon maps or, for recurrences, a dominant root, Baker–Davenport for a dominant complex pair, or an invariant cone. The real place of recurrences needs `python-flint` (`pip install galrax[abs]`).
 
 ```python
 # Berstel's sequence a_{n+3} = 2 a_{n+2} - 4 a_{n+1} + 4 a_n from 0, 0, 1, over all n in Z.
@@ -209,7 +207,7 @@ galrax-abs map "i + 1" "2*x" --vars i,x --start 0,1 --until "x == 2*i + 22"
 galrax-abs tpls mfcs.tpls --timeout 30 --jobs 4 > zeros.jsonl  # (k, r, u) per line
 ```
 
-On 900 instances of the data set of the SKOLEM tool (Bilu, Luca, Nieuwveld, Ouaknine, Purser, Worrell, MFCS 2022), on the same laptop, ABS certifies 899 in 0.15 s on average, SKOLEM 890 with Baker–Davenport and 404 with Leapfrogging, and no tool gave a wrong zero set. Both rest on the same Baker–Davenport argument for recurrences; ABS's own contribution is for maps, where no such argument exists: on orbits of random quadratic maps of $\mathbb{Z}^3$ it certifies all 100, against 1 for the étale sieve alone. The settings, all tables and the history of the parameters are in [`benchmarks/README.md`](benchmarks/README.md).
+On 900 instances of the data set of the SKOLEM tool (Bilu, Luca, Nieuwveld, Ouaknine, Purser, Worrell, MFCS 2022), on the same laptop, ABS certifies 899 in 0.15 s on average, SKOLEM 890 with Baker–Davenport and 404 with Leapfrogging, and no tool gave a wrong zero set. Both rest on the same Baker–Davenport argument for recurrences; ABS's own contribution is for maps, where no such argument exists: on orbits of random quadratic maps of $\mathbb{Z}^3$ it certifies all 100, against 1 for the étale sieve alone. The settings, all tables and the history of the parameters are in [`benchmarks/README.md`](https://github.com/NotTruecCoder/galrax/blob/main/benchmarks/README.md).
 
 ### Speed
 
@@ -376,7 +374,7 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 | `KoopmanOperator`, `advection_diffusion` | The Koopman operator of a flow, and transport plus ultrametric diffusion. |
 | `PowerSeries` | Analytic field components: `exp`, `log1p`, `geometric`, sums and products. |
 | `Residues`, `Limbs` | Arithmetic in $\mathbb{Z}/p^K$ on `int64` arrays, with one word, two words or any number of limbs. |
-| `plot_trajectory`, `plot_phase_portrait`, `plot_advection_diffusion` | Pictures (needs matplotlib). |
+| `plot_trajectory`, `plot_phase_portrait`, `plot_advection_diffusion` | Pictures (needs matplotlib: `pip install galrax[plot]`). |
 
 `galrax.ultrametric`:
 
@@ -413,7 +411,7 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 
 ## What is known and what is new
 
-Interpolation of iterates by Mahler series is due to Bell and Poonen; here it is inverted, computing the field of a map, and the product of the flows of several maps is the chart of Cantat–Jang, turned into a criterion for minimality on balls of explicit radius (for $d = 2$, $k = 1$ it is Jang's step for Markoff surfaces); cycles of polynomial maps and the permanence of their growth to desJardins–Zieve and Fan–Liao; one-dimensional $p$-adic linearisation to Herman–Yoccoz. That orbits in dimension one are balls can also be seen by separation of variables, and is probably known to specialists. As far as we could find, the computational side is new: exact global flows in machine integers, flow-box coordinates by Newton's method, event sets by ball refinement, certified normal forms through Smith forms over $\mathbb{Z}_p$, and formal logarithms computed as flow-box coordinates.
+Interpolation of iterates by Mahler series is due to Bell and Poonen; here it is inverted, computing the field of a map, and the product of the flows of several maps is the chart of Cantat–Jang, turned into a criterion for minimality on balls of explicit radius (for $d = 2$, $k = 1$ it is Jang's step for Markoff surfaces); cycles of polynomial maps and the permanence of their growth to desJardins–Zieve and Fan–Liao; one-dimensional $p$-adic linearisation to Herman–Yoccoz. That orbits in dimension one are balls is Mukhamedov's theorem. As far as we could find, the computational side is new: exact global flows in machine integers, flow-box coordinates by Newton's method, event sets by ball refinement, certified normal forms through Smith forms over $\mathbb{Z}_p$, formal logarithms computed as flow-box coordinates, and ABS, which certifies zero sets of integer orbits of nonlinear maps.
 
 ## Development
 
@@ -426,7 +424,7 @@ pytest test/test_group_algebra.py test/test_ultrametric.py test/test_padic_flow.
 python benchmarks/padic_flow.py   # GPU throughput and set-up times
 python benchmarks/skolem.py mfcs.tpls --per-order 50   # SKOLEM dataset, see the docstring
 python benchmarks/nonlinear_skolem.py --count 200
-pip install python-flint   # ball arithmetic for the real place of adelic_sieve.py
+pip install -e ".[abs]"   # python-flint, for the real place of adelic_sieve.py
 python benchmarks/adelic_sieve.py recurrences --dataset mfcs.tpls --per-order 100 --modes abs
 ```
 
@@ -442,15 +440,7 @@ python benchmarks/adelic_sieve.py recurrences --dataset mfcs.tpls --per-order 10
 
 ## Citing
 
-If you use `galrax.padic`, please cite the preprint:
-
-```bibtex
-@misc{terskii_padic_flows,
-    title={Exact flows and normal forms of differential equations over the $p$-adic integers},
-    author={Kirill Terskii},
-    note={Preprint, in preparation. Code: \url{https://github.com/NotTruecCoder/galrax}},
-}
-```
+If you use galrax, please cite it through [`CITATION.cff`](https://github.com/NotTruecCoder/galrax/blob/main/CITATION.cff).
 
 ## Credits and license
 

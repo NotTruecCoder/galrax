@@ -371,6 +371,12 @@ def real_record(r, u, sides, steps=300, level=2):
     gives one. `level` builds the real place up: `0` the cone only, `1` with the
     dominant root, `2` with Baker--Davenport too.
     """
+    if level >= 1:
+        try:
+            import flint  # noqa: F401
+        except ImportError:
+            raise ImportError("The real place of recurrences needs python-flint: "
+                              "pip install 'galrax[abs]'.") from None
     N = dominant(r, u) if level >= 1 else None
     if N is None and level >= 2:
         from .baker import complex_pair

@@ -20,14 +20,18 @@ tests = [
 
 [project]
 authors = [
-  {name = "Кирилл"}
+  {name = "Kirill Terskii"}
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: Apache Software License",
   "Natural Language :: English",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering :: Mathematics"
 ]
 # diffrax._term.WrapTerm is private, hence the upper bound.
@@ -36,9 +40,10 @@ description = "Exact solvers for differential equations over the p-adic numbers 
 keywords = ["jax", "p-adic", "dynamical-systems", "differential-equations", "number-theory", "finite-groups", "formal-groups", "chabauty", "diffrax"]
 license = {file = "LICENSE"}
 name = "galrax"
+optional-dependencies = {abs = ["python-flint"], plot = ["matplotlib"]}
 readme = "README.md"
 requires-python = ">=3.11"
-urls = {repository = "https://github.com/NotTruecCoder/galrax"}
+urls = {issues = "https://github.com/NotTruecCoder/galrax/issues", repository = "https://github.com/NotTruecCoder/galrax"}
 version = "0.2.0"
 
 [project.scripts]

@@ -240,7 +240,7 @@ def main(argv=None):
             import flint  # noqa: F401
         except ImportError:
             parser.exit(1, "galrax-abs: the real place of recurrences needs python-flint: "
-                           "pip install python-flint\n")
+                           "pip install 'galrax[abs]'\n")
     from galrax.padic import henon_zeros, hypersurface_times, map_zeros, value_times
 
     began = time.perf_counter()
