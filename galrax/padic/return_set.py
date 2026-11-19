@@ -12,9 +12,13 @@ for every `q` in `Z_p`: the times of an event along the orbit are, for each
 `r = iL + j < N`, an `EventSet` of the flow, and the classes `n = s + r + N q` glue
 into a union of classes modulo `M p^k`, `M` the part of `N` prime to `p`.
 
-This covers orbits without attracting directions: `Dg^L` invertible modulo `p` on
-the cycle. A random polynomial map often has a singular `Dg^L` modulo `p`, and then
-the orbit falls into an attracting cycle, which this method does not treat.
+This needs an orbit without attracting directions: `Dg^L` invertible modulo `p` on
+the cycle. A random polynomial map often has a singular `Dg^L` modulo `p`; then the
+orbit modulo `p^K` is read exactly instead, a tail and a cycle of at most
+`EXACT_CAP` points. On a nilpotent `Dg^L` the cycle has `L` points, the attracting
+cycle modulo `p^K`; on a mixed one it grows with `K`. The times of an event are then
+classes modulo the cycle length, and a class holds no exact zero unless its point
+meets the event modulo `p^K`.
 
 For jump-ahead the flow is not needed: `q -> x_{s + r + N q}` is a power series whose
 `q^m` coefficient has valuation `>= m (e - 1/(p - 1))`, so modulo `p^K` it is the
@@ -42,6 +46,9 @@ from .polynomial import (
     reduce,
 )
 from .roots import _merge, Ball
+
+
+EXACT_CAP = 200_000  # points of an orbit read exactly modulo p^K
 
 
 def _unit(i: int, d: int) -> tuple:
@@ -76,8 +83,11 @@ class Orbit:
     modulo `p^K`: `x_n` for any integer `n` at a cost independent of `n`, and the
     return set of an event.
 
-    For orbits without attracting directions: `Dg^L` must be invertible modulo `p`
-    on the cycle of `x` modulo `p^e`; otherwise a `ValueError` is raised.
+    Without attracting directions (`Dg^L` invertible modulo `p` on the cycle of `x`
+    modulo `p^e`) through the flow of `g^N`. With them the orbit modulo `p^K` is read
+    exactly: then `cycle = step` is its period modulo `p^K`, there is no `flow`, the
+    classes of `times` count `n >= tail` only, and a `ValueError` is raised when the
+    orbit has more than `EXACT_CAP` points.
 
     **Arguments:**
 
@@ -117,10 +127,8 @@ class Orbit:
             ]
             A = _matmul(jacobian, A, p**e)
         if _determinant(A, p) == 0:
-            raise ValueError(
-                "Dg^L is not invertible modulo p on the cycle of `x`: the orbit falls "
-                "into an attracting cycle."
-            )
+            self._read_exactly(p, K, field, g, x, e)
+            return
         order, power = 1, A
         while power != identity:
             power, order = _matmul(power, A, p**e), order + 1
@@ -167,6 +175,26 @@ class Orbit:
             dtype=object,
         )
 
+    def _read_exactly(self, p, K, field, g, x, e):
+        """With attracting directions: the orbit modulo `p^K` up to its first repeat."""
+        m, seen, orbit, y = p ** (K + e), {}, [], x
+        while (key := tuple(v % p**K for v in y)) not in seen:
+            if len(orbit) >= EXACT_CAP:
+                raise ValueError(
+                    f"Dg^L is not invertible modulo p on the cycle of `x` (attracting "
+                    f"directions), and the orbit modulo p^K has more than {EXACT_CAP} "
+                    "points: lower the precision."
+                )
+            seen[key] = len(orbit)
+            orbit.append(y)
+            y = [evaluate_exact(f, y, m) for f in g]
+        s = seen[key]
+        self.p, self.precision, self.dimension = p, K, len(x)
+        self.tail, self.cycle = s, len(orbit) - s
+        self.step = self.cycle
+        self._field, self._start, self._G = field, x, None
+        self._g, self._e, self._orbit = g, e, orbit
+
     def __repr__(self) -> str:
         return (
             f"Orbit(p={self.p}, precision={self.precision}, dimension="
@@ -176,6 +204,8 @@ class Orbit:
     @cached_property
     def flow(self) -> PAdicFlow:
         """The flow of `g^N` in the coordinates `u`, built on first use."""
+        if self._G is None:
+            raise ValueError("No flow: the orbit has attracting directions.")
         digits = min(self.precision, max(1, int(math.log(32) / math.log(self.p))))
         return PAdicFlow.from_time_one(
             self.p, self.precision, self._G, table_digits=digits
@@ -235,6 +265,12 @@ class Orbit:
         if s and min(flat, default=0) < 0:
             raise ValueError("Negative iterates need a point periodic modulo p.")
         out = np.empty((len(flat), d), dtype=object)
+        if self._G is None:
+            for k, v in enumerate(flat):
+                i = v if 0 <= v < s else s + (v - s) % N
+                out[k] = [w % m for w in self._orbit[i]]
+            out = out.reshape(shape + ((d,) if d > 1 else ()))
+            return out[()] if out.ndim == 0 else out
         early = np.array([0 <= v < s for v in flat], dtype=bool)
         for k in np.flatnonzero(early):
             out[k] = [v % m for v in self._orbit[flat[k]]]
@@ -284,6 +320,16 @@ class Orbit:
             a += 1
         M = N // p**a
         bound, balls, classes = len(tail), [], []
+        if self._G is None:
+            # x_n = x_{s + r} mod p^K for n = s + r mod N: exact zeros need h = 0 there.
+            for r in range(N):
+                if hit(s + r, depth):
+                    found = None if hit(s + r, K) else 0
+                    classes.append((s + r, N, found))
+                    bound = None if bound is None or found is None else bound + found
+                    balls.append(Ball(((s + r) % (M * p**a),), a))
+            balls = sorted(_merge(balls, p, 1, M), key=lambda b: b.center)
+            return EventSet(balls, p, depth, bound, M, s or None, tail, tuple(classes))
         # x_{s + r + N q} = x_{s + r} mod p^{2e}, so most r are ruled out at once.
         cut = min(depth, 2 * e)
         for j in range(L):

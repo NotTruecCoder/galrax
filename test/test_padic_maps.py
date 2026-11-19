@@ -49,8 +49,8 @@ def test_tail_and_attracting_orbits():
     assert [mapping.iterate(1, n, 5) for n in range(200)] == orbit
     with pytest.raises(ValueError, match="periodic"):
         mapping.iterate(1, -1, 5)
-    with pytest.raises(ValueError, match="attracting"):
-        PAdicMap(3, [0, 0, 1]).iterate(3, 5, 4)
+    square = PAdicMap(3, [0, 0, 1])  # x -> x^2 from 3: attracted to 0
+    assert [square.iterate(3, n, 4) for n in range(6)] == _orbit(square, 3, 6, 4)
     with pytest.raises(ValueError, match="polynomial"):
         PAdicMap(2, lambda x: x + 1).iterate(0, 5, 4)
 

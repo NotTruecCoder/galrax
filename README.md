@@ -149,7 +149,7 @@ print(sorted(pf.logarithmic_exponents([P, Q], 6, p=5, curve=E).values()))
 
 ### Orbits, return sets and Chabauty
 
-For a polynomial map $g$ of $\mathbb{Z}_p^d$ and an orbit without attracting directions ($Dg^L$ invertible modulo $p$ on its cycle modulo $p$), a power $g^N$ is the identity modulo $p$ near the cycle, hence the time-one map of a flow. So $x_n$ costs the same for every $n$, and the times $n$ at which $h(x_n)$ vanishes to some depth are a finite union of residue classes, with Strassmann's bound on the exact zeros. Linear recurrences are orbits of their companion matrix.
+For a polynomial map $g$ of $\mathbb{Z}_p^d$ and an orbit without attracting directions ($Dg^L$ invertible modulo $p$ on its cycle modulo $p$), a power $g^N$ is the identity modulo $p$ near the cycle, hence the time-one map of a flow. So $x_n$ costs the same for every $n$, and the times $n$ at which $h(x_n)$ vanishes to some depth are a finite union of residue classes, with Strassmann's bound on the exact zeros. Linear recurrences are orbits of their companion matrix. With attracting directions, the orbit modulo $p^K$ is read exactly instead: a tail and a cycle, which on a nilpotent $Dg^L$ is the attracting cycle itself.
 
 ```python
 # Berstel's sequence a_{n+3} = 2 a_{n+2} - 4 a_{n+1} + 4 a_n from 0, 0, 1.
@@ -162,6 +162,11 @@ chebyshev = pf.Orbit(101, 9, pf.linear([[0, 1], [-1, 2 * x]]), (1, x))
 y = chebyshev(n)[0]  # T_n(x), at a cost independent of n
 m = pf.matrix_power_index(101, 9, [[0, 1], [-1, 2 * x]], (1, x), y)
 print(chebyshev(m)[0] == y, m <= n)  # True True
+
+# x -> x^2 from 3 is attracted to 0: x_n = 3^(2^n), read exactly modulo 3^8.
+square = pf.Orbit(3, 8, [{(2,): 1}], 3)
+print(square.tail, square.cycle, square(10**9))  # 3 1 0
+print(square.times(pf.PAdicEvent([-81, 1])).tail)  # (2,): only x_2 = 81
 
 # G_m x G_m as a two-dimensional formal group: the logarithm is p^2 times the
 # coordinates of the chart of two commuting flows.
@@ -364,7 +369,7 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 | `tiny_integrals`, `chabauty_zeros`, `disc_differentials` | Tiny integrals of $x^k\,dx/y$ on $y^2 = f(x)$, and the zeros of a Chabauty function in a residue disc, with Strassmann's bound. |
 | `EllipticCurve`, `logarithmic_exponents` | Exact rational points on a Weierstrass curve, and the Smith exponents for eigenvalues $\log P_i$. |
 | `PAdicMap`, `Cycle`, `Component` | Discrete maps: cycle trees, minimal decompositions, minimality; `iterate` ($T^n$ for large, negative or $p$-adic $n$, or an array of $n$), `index`, `period`, `hitting_times` of a loop; polynomial maps of $\mathbb{Z}_p^d$ through `Orbit`. |
-| `Orbit(p, precision, g, x)` | The orbit of a point under a polynomial map of $\mathbb{Z}_p^d$, without attracting directions: $x_n$ for arrays of $n$, `times` of an event (classes modulo $M p^k$ and Strassmann's bound), `index`. |
+| `Orbit(p, precision, g, x)` | The orbit of a point under a polynomial map of $\mathbb{Z}_p^d$: $x_n$ for arrays of $n$, `times` of an event (classes modulo $M p^k$ and Strassmann's bound), `index`; with attracting directions, read exactly modulo $p^K$. |
 | `recurrence_zeros`, `map_zeros`, `henon_zeros`, `ZeroSet` | Certified zero sets over $\mathbb{Z}$ of integer recurrences and orbits, by ABS (`galrax.padic.adelic`). |
 | `etale_primes(F, x0, X)` | The odd primes $p \le X$ at which the cycle of the orbit modulo $p$ is étale, so Strassmann's bound suffices; an empty list means full ABS is needed. |
 | `value_times`, `hypersurface_times`, `loop_exit`, `charpoly_to_r` | $u_n = c$, $g(x_n) = 0$ and the exit step of a polynomial loop, by ABS; the command `galrax-abs`. |
@@ -402,7 +407,7 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 - The space reduction needs $p^{rd}$ centres, so it gets coarser in high dimension; the tests go up to $d = 4$.
 - Beyond 62 bits, results come back as Python integers and the call cannot be traced by `jit` as a whole.
 - Events, equilibria, linearisation, maps and the Smith forms of the normal form run on the host, sequentially.
-- `Orbit`, `recurrence_times`, `matrix_power_index` and the jump-ahead of `PAdicMap` cover orbits without attracting directions: $Dg^L$ invertible modulo $p$ on the cycle. In a random sample of 40 polynomial maps this excluded 22.
+- `Orbit`, `recurrence_times`, `matrix_power_index` and the jump-ahead of `PAdicMap` go through a flow only without attracting directions ($Dg^L$ invertible modulo $p$ on the cycle). Otherwise the orbit modulo $p^K$ is read exactly, up to `EXACT_CAP` $= 2 \cdot 10^5$ points: no `flow`, $n \ge 0$ unless the start is periodic modulo $p^K$, and a class holds no exact zero only when its point misses the event modulo $p^K$. On a mixed $Dg^L$ the cycle grows with $K$.
 - `chabauty_zeros` works in finite residue discs of an odd-degree or even-degree model with good reduction at odd $p$; the disc at infinity needs a change of model.
 - Analytic fields need a lower bound on the valuations of their coefficients; a wrong bound is not detected.
 - Queries that have no answer raise instead of returning a guess: `rectify` for a point outside the flow box (an error at run time under `jit`), `Linearization.orbit_time` for a point off the orbit, `MinimalAction` when the displacements are not a basis.

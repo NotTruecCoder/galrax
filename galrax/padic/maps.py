@@ -416,8 +416,8 @@ class PAdicMap:
 
 
 def matrix_power_index(p: int, precision: int, matrix, start, target, coordinate=0):
-    """The smallest `n >= 0` with `(M^n v)_coordinate = target mod p^K`, or `None`,
-    for `M` invertible modulo `p`.
+    """The smallest `n >= 0` with `(M^n v)_coordinate = target mod p^K`, or `None`;
+    for `M` singular modulo `p` the orbit modulo `p^K` is read exactly (`Orbit`).
 
     Chebyshev, Lucas and Dickson sequences are all `(M^n v)_0` for a `2 x 2` `M`:
     `T_n(x)` with `M = [[0, 1], [-1, 2x]]`, `v = (1, x)`; `V_n(P, Q)` with

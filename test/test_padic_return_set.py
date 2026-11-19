@@ -112,8 +112,41 @@ def test_orbit_inside_the_variety():
     assert all(n in events for n in range(100))
 
 
-def test_attracting_cycle_is_an_error():
-    with pytest.raises(ValueError, match="invertible"):
-        Orbit(3, 4, [{(2, 0): 1}, {(0, 1): 1}], (3, 1))
-    with pytest.raises(ValueError, match="invertible"):
-        recurrence_times(2, 4, [4, -4, 2], [0, 0, 1])
+@pytest.mark.parametrize(
+    "p,K,g,x,kind",
+    [
+        (3, 4, [{(2,): 1}], (3,), "nilpotent"),  # x -> x^2 from 3: tends to 0
+        (5, 4, [{(1,): 5, (0,): 1}], (0,), "nilpotent"),  # tends to -1/4
+        (3, 4, [{(2, 0): 1}, {(0, 1): 1}], (3, 1), "mixed"),
+        (3, 3, [{(0, 1): 1, (0, 0): 1}, {(2, 0): 3, (1, 1): 1}], (1, 2), "mixed"),
+    ],
+)
+def test_attracting_orbits_read_exactly(p, K, g, x, kind):
+    orbit = Orbit(p, K, g, x)
+    points = [tuple(y) for y in _orbit(g, x, 300, p**K)]
+    got = orbit(np.arange(300))
+    assert [tuple(np.atleast_1d(v)) for v in got] == points
+    assert orbit.tail + orbit.cycle <= 300
+    with pytest.raises(ValueError, match="attracting"):
+        orbit.flow
+    d = len(x)
+    for depth in range(1, K + 1):
+        for target in {points[1][0], points[-1][0], 7}:
+            event = PAdicEvent({(1,) + (0,) * (d - 1): 1, (0,) * d: -target}, depth)
+            found = orbit.times(event)
+            hits = [n for n, y in enumerate(points) if (y[0] - target) % p**depth == 0]
+            assert [n for n in range(300) if n in found] == hits
+            assert found.first() == (hits[0] if hits else None)
+            if found.zero_bound is not None:
+                exact = [n for n in hits if (points[n][0] - target) % p**K == 0]
+                assert len(exact) <= found.zero_bound
+
+
+def test_singular_recurrence_reads_the_orbit_exactly():
+    # The companion matrix of 4, -4, 2 is nilpotent modulo 2.
+    events = recurrence_times(2, 4, [4, -4, 2], [0, 0, 1])
+    a = [0, 0, 1]
+    for _ in range(200):
+        a.append(2 * a[-1] - 4 * a[-2] + 4 * a[-3])
+    assert all((n in events) == (v % 2**4 == 0) for n, v in enumerate(a))
+    assert events.zero_bound is None  # u_n = 0 mod 2^4 from some n on
