@@ -9,7 +9,7 @@ Off `V+` and `V-` the orbit is in the finite box `|x|, |y| < R`. So an integer
 orbit is periodic or leaves the box for good in both directions, and once
 `|y_n| > |target|` in `V+` no later `x_m = y_{m-1}` can equal the target
 (backwards the same with `x`). This decides every case exactly, with an
-explicit bound on `|n|`, in integer arithmetic.
+explicit bound on `|n|`, in integer arithmetic: `galrax.padic.adelic.henon_real`.
 
     python benchmarks/henon_escape.py --count 200
 """
@@ -17,41 +17,8 @@ explicit bound on `|n|`, in integer arithmetic.
 import argparse
 import time
 
+from galrax.padic.adelic import henon_real
 from nonlinear_skolem import make_cases
-
-
-def solve(c, P, start, target):
-    """`(zeros, periodic)`: every `n` in `Z` with `x_n = target`."""
-    a0, a1, _ = P
-    R = abs(a1) + abs(a0) + 3
-
-    def poly(y):
-        return sum(a * y**i for i, a in enumerate(P))
-
-    bound = max(R, abs(target) + 1)
-    zeros = []
-
-    def forward(x, y):
-        return y, c * x + poly(y)
-
-    def backward(x, y):
-        return c * (y - poly(x)), x
-
-    for sign, step, escaped in (
-        (1, forward, lambda x, y: abs(y) >= max(abs(x), bound)),
-        (-1, backward, lambda x, y: abs(x) >= max(abs(y), bound)),
-    ):
-        point, n = start, 0
-        while True:
-            if point[0] == target and (n or sign == 1):
-                zeros.append(sign * n)
-            if escaped(*point):  # in V+ (resp. V-) beyond the target: no later zero
-                break
-            point, n = step(*point), n + 1
-            if point == start:  # back to the start: the orbit is periodic over Z
-                period = n
-                return sorted({m for m in zeros if 0 <= m < period}), period
-    return sorted(set(zeros)), None
 
 
 def main():
@@ -60,7 +27,7 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
     began = time.perf_counter()
-    rows = [solve(*case[1:]) for case in make_cases(args.count, args.seed)]
+    rows = [henon_real(*case[1:])[1:] for case in make_cases(args.count, args.seed)]
     seconds = time.perf_counter() - began
     periodic = sum(1 for _, per in rows if per)
     hitting = sum(1 for z, per in rows if z and not per)

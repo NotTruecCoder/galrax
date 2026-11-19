@@ -180,113 +180,21 @@ zeros = pf.chabauty_zeros(f, 7, 8, (3, 6), (ell[1], -ell[0]))
 print(zeros.zero_bound)  # 2
 ```
 
-### The Skolem problem: benchmarks
+### The Skolem problem: zero sets of integer orbits
 
-`EventSet.classes` splits Strassmann's bound over the classes $n \equiv c \bmod N$ of an orbit; a class none of whose integers lies in the event set at another prime holds no integer zero. Summing the bounds of the classes that survive several primes, and comparing with the zeros found in exact arithmetic for $|n| \le$ a window, certifies the whole zero set over $\mathbb{Z}$, negative $n$ included, when the two agree. This is the classical Skolem–Mahler–Lech sieve; nothing in it is specific to linear maps.
+`recurrence_zeros`, `map_zeros` and `henon_zeros` certify the set of times $n$ with $u_n = 0$, or with $x_n =$ target, for an integer orbit. They run ABS (`galrax.padic.adelic`), a sieve over all places: Strassmann's bound at étale primes, the exact orbit modulo $p^k$ at the singular ones, and at the real place the escape filtration of Hénon maps or, for recurrences, a dominant root, Baker–Davenport for a dominant complex pair, or an invariant cone. The real place of recurrences needs `python-flint`.
 
-**Linear recurrences** (`benchmarks/skolem.py`), on the dataset of the SKOLEM tool (Bilu, Luca, Nieuwveld, Ouaknine, Purser, Worrell, *Skolem meets Schanuel*, MFCS 2022): 82,360 random integer recurrences of order 2–10 with entries in $[-20, 20]$, the order uniform. A sample of 50 per order, 60 s per instance, 12 processes on a laptop. Up to eight primes $p < 200$ are tried, in order of $p$ times the period of $u_n$ modulo $p$ (at most 5000), since the cost of a prime grows with that product and varies by orders of magnitude between primes. SKOLEM's mean times are from its paper (60 s timeout, SageMath on a 16-thread server); the paper gives its success rate only for the whole dataset.
+```python
+# Berstel's sequence a_{n+3} = 2 a_{n+2} - 4 a_{n+1} + 4 a_n from 0, 0, 1, over all n in Z.
+pf.recurrence_zeros([2, -4, 4], [0, 0, 1])
+# ZeroSet(certified=True, zeros=(0, 1, 4, 6, 13, 52), period=None, by='real / real', primes=())
+```
 
-| order | galrax: certified | galrax: timed out | galrax: mean time of certified | SKOLEM: mean time of solved |
-|---|---|---|---|---|
-| 2 | 50 / 50 | 0 | 0.5 s | 0.03 s |
-| 3 | 50 / 50 | 0 | 1.2 s | 0.05 s |
-| 4 | 50 / 50 | 0 | 5.0 s | 0.19 s |
-| 5 | 41 / 50 | 4 | 17 s | 4.8 s |
-| 6 | 19 / 50 | 3 | 28 s | 9.0 s |
-| 7 | 2 / 50 | 13 | 42 s | 11.7 s |
-| 8 | 1 / 50 | 6 | 53 s | 8.1 s |
-| 9–10 | 0 / 100 | 13 | – | 7.4 s, 5.7 s |
-| **all** | **213 / 450 (47%)** | 39 | | **42,346 / 82,360 (51%)** |
-
-So galrax certifies orders 2–4 completely but is 15–25 times slower than SKOLEM there, and is weaker from order 5 on. SKOLEM's timeouts pass 50% only from order 7, while for galrax most instances of order 7 and above end uncertified: their periods modulo small primes exceed the limit, or the primes that remain do not separate the classes. SKOLEM also adds Baker–Davenport bounds to the sieve, which galrax does not have. Of the examples in the SKOLEM paper, galrax certifies Berstel's sequence (zeros $0, 1, 4, 6, 13, 52$) and Examples 15 and 17 (zeros $2$ and $0, 1, 4$). It does not certify Example 16, where one $p$-adic zero survives all eight primes.
-
-The parameters were tuned on the same sample:
-
-| primes | order of primes | period limit | certified |
-|---|---|---|---|
-| 4 | $3, 5, 7, 11, \ldots$ | – | 127 |
-| 4 | by $p \cdot$ period | 2000 | 171 |
-| 8 | by $p \cdot$ period | 5000 | **213** |
-| 8 | by $p \cdot$ period | 20000 | 198 |
-| 8 | by cost per common factor of the periods | 5000 | 214 |
-
-A larger limit lets in primes too expensive to finish within 60 s. Choosing primes whose periods share factors, which the sieve compares, gains nothing over the simpler order.
-
-**Nonlinear maps** (`benchmarks/nonlinear_skolem.py`), where SKOLEM and other tools for linear recurrences do not apply: orbits of generalised Hénon maps $(x, y) \mapsto (y, \pm x + a_2 y^2 + a_1 y + a_0)$ of $\mathbb{Z}^2$ with $|a_i|, |x_0|, |y_0| \le 5$, and all $n \in \mathbb{Z}$ with $x_n = $ target. For half of the orbits the target is a value $x_m$ of the orbit with $|m| \le 3$; for the rest it is random in $[-20, 20]$. Primes are chosen as for linear recurrences, up to eight, with 60 s per orbit:
-
-| target | orbits | periodic over $\mathbb{Z}$ | certified, with zeros | certified, never reached | not certified | timed out | mean time of certified |
-|---|---|---|---|---|---|---|---|
-| orbit value | 95 | 1 | 54 | 0 | 0 | 40 | 23 s |
-| random | 105 | 0 | 9 | 72 | 0 | 24 | 20 s |
-| **all** | **200** | **1** | **63** | **72** | **0** | **64** | **21 s** |
-
-The periodic orbit is solved directly. Of the other 199, 135 are certified: for 63 the list of zeros is complete, and for 72 the target is never reached at any $n \in \mathbb{Z}$. With the fixed primes $3, 5, 7, 11$ the count was 123. No orbit finished without a certificate: every one that finished in time was settled.
-
-These instances have a much simpler archimedean solution. Outside a bounded square the forward orbit of a Hénon map escapes with $|x_n|$ increasing, and so does the backward orbit (the filtration of Bedford–Smillie and Friedland–Milnor). An exact integer computation therefore decides each instance after an explicit number of steps, either reaching a cycle or leaving the square: `benchmarks/henon_escape.py`, with the square $|x|, |y| < |a_1| + |a_0| + 3$, settles all 200 orbits, the 64 timeouts included, in 5.5 ms (1 periodic, 107 with zeros, 92 never reached), in agreement with the exact zeros for $|n| \le 14$. The benchmark is thus a test of the $p$-adic certificate on problems whose answer is known by other means, not a case where it is the only method. The certificate itself uses no archimedean information, so it also applies where no such filtration exists, for example to orbits in $\mathbb{Z}_p^2$.
-
-**Adelic sieve by branch type** (`benchmarks/adelic_sieve.py`). The sieve above needs an étale prime, one where $Dg^L$ is invertible modulo $p$ on the cycle. ABS uses every place:
-
-- At an étale prime it uses Strassmann's bound, as above.
-- At a singular prime (nilpotent or mixed in the Fitting decomposition) it reads the exact orbit modulo $p^k$, $k = 1, 2, \ldots$: a tail $T$ and a cycle. When no point of the cycle hits the target, every zero lies below $T$. On a nilpotent branch the orbit tends to an attracting cycle, so this happens once $k$ exceeds the valuation of the target there. The bound comes from the computed cycle, so it holds on any branch without constants.
-- The same cycle is computed at étale primes $p < 50$. There it gives the exclusions of `Orbit.times` at a fraction of the cost.
-- At the real place: the filtration for Hénon maps. For recurrences, in ball arithmetic (Arb, through `python-flint`): a dominant root $\lambda$ with $u_n = c\lambda^n + \ldots$, $c \ne 0$, gives an explicit $N$ past which $u_n \ne 0$; a dominant complex pair gives one through Matveev's bound and the Baker–Davenport reduction (`benchmarks/baker.py`, with Matveev's constant raised $10^6$ times as a margin, which moves the final bound only through $\log N_0$). Failing both, an invariant cone $|u_{m+1}| \ge \theta |u_m|$, which exists when $\theta + \sum_{i \ge 1} |r_i| \theta^{-i} \le |r_0|$; $u$ never vanishes inside it.
-
-For $n < 0$, a recurrence is run as the integer recurrence $s_m = r_{k-1}^m u_{-m}$. Records at primes where the map is invertible modulo $p$ hold both ways. The others, and the real place, hold on one side, and each side is settled on its own. Zero sets are certified over $\mathbb{Z}$ for recurrences and Hénon maps, and for $n \ge 0$ for quadratic maps, which are not invertible.
-
-The data:
-
-- Recurrences: 20 per order 2–10, drawn from the distribution of the SKOLEM data set (entries in $[-20, 20]$).
-- Random quadratic maps of $\mathbb{Z}^2$ and $\mathbb{Z}^3$: 100 each, from the generator of the étale-prime survey, including the 6 and 4 orbits with no étale prime below 200 and 100.
-- The 200 Hénon orbits above.
-
-All runs use 12 processes on a laptop, with 30 s per instance (60 s for Hénon). Up to eight Strassmann primes are used, as above. Every instance certified by both methods has the same zeros; no instance is certified by the sieve alone.
-
-| data | instances | sieve: certified | ABS: certified | timed out, sieve / ABS | mean time of certified, sieve / ABS | ABS settled by |
-|---|---|---|---|---|---|---|
-| recurrences, order 2–4 | 60 | 60 | 60 | 0 / 0 | 2.3 s / 0.03 s | real place on a side 58, étale modulo $p^k$ 3 |
-| recurrences, order 5–6 | 40 | 16 | 40 | 22 / 0 | 13 s / 0.09 s | real place 40 |
-| recurrences, order 7–10 | 80 | 0 | 80 | 37 / 0 | – / 0.07 s | real place 80 |
-| quadratic, $d = 2$ | 100 | 82 | 97 | 9 / 3 | 5.1 s / 0.6 s | nilpotent 42, mixed 37, étale modulo $p^k$ 15, Strassmann 3 |
-| quadratic, $d = 3$ | 100 | 1 | 93 | 96 / 7 | 30 s / 2.8 s | mixed 55, nilpotent 25, étale modulo $p^k$ 13 |
-| Hénon | 200 | 131 | 200 | 69 / 0 | 21 s / < 1 ms | real place 200 (1 periodic, reported as its zeros on one period and the period) |
-| **all** | **580** | **290** | **570** | 233 / 10 | | |
-
-In "settled by", a recurrence counts once for each kind of record that settles one of its two sides.
-
-On quadratic maps of $\mathbb{Z}^3$ the sieve fails: a cycle of length $L$ is étale with probability about $(1 - 1/p)^L$, and most cycles are mixed. Those mixed cycles are what ABS uses. The ten orbits with no étale prime are all certified, in 0.2 s and 1.7 s on average for $d = 2$ and $d = 3$. For recurrences the real place now settles almost every instance on both sides; the $p$-adic records are left to those whose dominant root has coefficient $0$ or whose dominant roots are not a single root or a single complex pair.
-
-The sieve's counts depend on load. It ran alongside ABS, so the Hénon count is 131 here against 135 alone at the same timeout.
-
-**On the SKOLEM data set itself** (`--dataset mfcs.tpls`), with the real place built up step by step on the same 180 instances (20 per order, seed 0, 30 s each):
-
-| real place | certified | timed out | mean time of certified |
-|---|---|---|---|
-| invariant cone | 120 | 35 | 2.3 s |
-| + dominant root | 149 | 19 | 1.2 s |
-| + dominant complex pair (Baker–Davenport) | **180** | 0 | 0.02 s |
-
-On 900 other instances (100 per order, seed 1) ABS certifies 899; one of order 9 times out. Every certified zero set was checked again, independently, against the exact zeros up to $|n| = N + 2000$, $N$ the larger of the two real-place bounds (up to 76,509): no difference.
-
-**Against SKOLEM on the same instances.** SKOLEM (skolem-solver at commit `9379db1`, SageMath 10.7 under WSL2) ran with each of its two algorithms, Baker–Davenport over $\mathbb{Z}$ (`-B -bi`) and Leapfrogging (`-L`); ABS ran on Windows. Both used 4 processes on the same laptop, 30 s per instance, and the time is that of the computation in a running process, without start-up:
-
-| order | ABS | SKOLEM `-B -bi` | SKOLEM `-L` |
-|---|---|---|---|
-| 2 | 100 (0.07 s) | 93 (0.30 s) | 93 (0.20 s) |
-| 3 | 100 (0.01 s) | 99 (0.39 s) | 99 (0.29 s) |
-| 4 | 100 (0.02 s) | 100 (0.41 s) | 99 (0.29 s) |
-| 5 | 100 (0.03 s) | 100 (0.45 s) | 77 (3.3 s) |
-| 6 | 100 (0.06 s) | 100 (0.49 s) | 32 (5.2 s) |
-| 7 | 100 (0.12 s) | 99 (0.72 s) | 3 (8.8 s) |
-| 8 | 100 (0.22 s) | 100 (0.69 s) | 1 (1.1 s) |
-| 9 | 99 (0.28 s) | 99 (0.95 s) | 0 |
-| 10 | 100 (0.51 s) | 100 (1.13 s) | 0 |
-| **all** | **899 (0.15 s)** | **890 (0.62 s)** | **404 (1.3 s)** |
-
-Certified instances out of 100 per order, with the mean time of those. SKOLEM's ten misses with `-B` are nine degenerate recurrences, which it rejects, and one timeout; ABS certifies those nine, whose zero sets are finite. Leapfrogging certifies 45%, close to the 51% of its paper, so that figure is for `-L`. On the 180 instances of seed 0 the counts are 180, 179 and 83. No tool gave a wrong zero set. The margin of ABS is thus small in coverage (the degenerate cases) and a factor 2–20 in time, larger at low order; both tools rest on the same Baker–Davenport argument for recurrences, and ABS's own contribution is for the maps where no such argument exists.
+On 900 instances of the data set of the SKOLEM tool (Bilu, Luca, Nieuwveld, Ouaknine, Purser, Worrell, MFCS 2022), on the same laptop, ABS certifies 899 in 0.15 s on average, SKOLEM 890 with Baker–Davenport and 404 with Leapfrogging, and no tool gave a wrong zero set. Both rest on the same Baker–Davenport argument for recurrences; ABS's own contribution is for maps, where no such argument exists: on orbits of random quadratic maps of $\mathbb{Z}^3$ it certifies 93 of 100, against 1 for the étale sieve alone. The settings, all tables and the history of the parameters are in [`benchmarks/README.md`](benchmarks/README.md).
 
 ### Speed
 
-Throughput for $10^6$ random $(t, x)$ per call on a laptop GPU with 6 GB of memory (JAX 0.12, CUDA 12, WSL2), median of 20 calls after 5 warm-up calls. Every method agrees bit for bit. "Before" is the version without the space reduction.
+Throughput for $10^6$ random $(t, x)$ per call on a laptop GPU with 6 GB of memory (JAX 0.12, CUDA 12, WSL2), median of 20 calls after 5 warm-up calls. Every method agrees bit for bit. "Before" is the version without three changes made together: the space reduction, the table read one coefficient at a time, and the short Newton flows.
 
 | $p$, digits, $d$ | degree before → after | `flow` before → after | `rectify` before → after |
 |---|---|---|---|
@@ -439,6 +347,7 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 | `EllipticCurve`, `logarithmic_exponents` | Exact rational points on a Weierstrass curve, and the Smith exponents for eigenvalues $\log P_i$. |
 | `PAdicMap`, `Cycle`, `Component` | Discrete maps: cycle trees, minimal decompositions, minimality; `iterate` ($T^n$ for large, negative or $p$-adic $n$, or an array of $n$), `index`, `period`, `hitting_times` of a loop; polynomial maps of $\mathbb{Z}_p^d$ through `Orbit`. |
 | `Orbit(p, precision, g, x)` | The orbit of a point under a polynomial map of $\mathbb{Z}_p^d$, without attracting directions: $x_n$ for arrays of $n$, `times` of an event (classes modulo $M p^k$ and Strassmann's bound), `index`. |
+| `recurrence_zeros`, `map_zeros`, `henon_zeros`, `ZeroSet` | Certified zero sets over $\mathbb{Z}$ of integer recurrences and orbits, by ABS (`galrax.padic.adelic`). |
 | `recurrence_times`, `companion`, `linear` | Zeros of linear recurrences through the companion matrix; linear maps. |
 | `matrix_power_index` | The first $n$ with $(M^n v)_i = y \bmod p^K$: degrees of Chebyshev, Lucas and Dickson sequences. |
 | `lie_bracket`, `commutator` | $[X, Y]$ of two fields, and $g h g^{-1} h^{-1}$ of two maps congruent to the identity. |

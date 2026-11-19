@@ -102,9 +102,9 @@ def solve(case, window=14, primes=8):
 
 def make_cases(count, seed):
     """`(kind, c, P, start, target)` for `count` random orbits; half the targets are
-    values of the orbit.
+    values of the orbit. `seed` is an integer or a `random.Random` to draw from.
     """
-    rng = random.Random(seed)
+    rng = seed if isinstance(seed, random.Random) else random.Random(seed)
     cases = []
     for _ in range(count):
         P = [rng.randint(-5, 5), rng.randint(-5, 5), rng.choice([-3, -2, -1, 1, 2, 3])]

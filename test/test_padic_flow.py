@@ -1278,3 +1278,15 @@ def test_minimal_decomposition_kinds():
     assert len(component.points) == 3**component.level
     assert PAdicMap(5, [0, 1, 5]).is_bijective()
     assert not PAdicMap(5, [0, 0, 1]).is_bijective()
+
+
+def test_default_table_digits_fit_a_small_precision():
+    flow = PAdicFlow(3, 2, [3])  # the default J = 3 would exceed K = 2
+    assert flow.table_digits == 2 and int(flow.flow(0, 2)) == 2
+
+
+def test_uint64_inputs_are_reduced_before_the_cast():
+    big = np.uint64(2**64 - 1)
+    assert int(PAdicFlow(3, 2, [3], table_digits=1).flow(0, big)) == (2**64 - 1) % 9
+    assert int(PAdicFlow(3, 2, [3]).flow(0, jnp.asarray(big))) == (2**64 - 1) % 9
+    assert int(PAdicFlow(3, 60, [3]).flow(0, big)) == 2**64 - 1  # limbs

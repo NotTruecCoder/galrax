@@ -144,10 +144,11 @@ class PAdicFlow:
                 f"{p**needed}, so that the flow exists for all times in Z_{p}. "
                 f"Multiply the field by {p**needed} and divide time by {p**needed}."
             )
+        widest = min(K, getattr(residues, "width", K))
         if table_digits is None:
             table_digits = max(1, int(math.floor(math.log(32) / math.log(p))))
+            table_digits = min(widest, table_digits)
         table_digits = int(table_digits)
-        widest = min(K, getattr(residues, "width", K))
         if not 1 <= table_digits <= widest:
             raise ValueError(f"`table_digits` must lie in 1, ..., {widest}.")
         if storage is None:

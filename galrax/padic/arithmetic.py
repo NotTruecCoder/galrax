@@ -6,6 +6,13 @@ import jax.numpy as jnp
 import numpy as np
 
 
+def _on_host(x) -> bool:
+    """Inputs reduced on the host in Python integers: object arrays, and `uint64`,
+    whose values past `2^63` would wrap in the cast to `int64`.
+    """
+    return not isinstance(x, jax.Array) and np.asarray(x).dtype in (object, np.uint64)
+
+
 def is_prime(p: int) -> bool:
     return p >= 2 and all(p % k for k in range(2, math.isqrt(p) + 1))
 
@@ -81,11 +88,8 @@ class Residues:
     extra = 0
 
     def __init__(self, p: int, precision: int, reduction: str | None = None):
-        p, precision = int(p), int(precision)
-        if not is_prime(p):
-            raise ValueError("`p` must be a prime.")
-        if precision < 1:
-            raise ValueError("`precision` must be at least 1.")
+        self._setup(p, precision)
+        p, precision = self.p, self.precision
         single, double = single_word_precision(p), double_word_precision(p)
         if precision > double:
             raise ValueError(
@@ -103,6 +107,20 @@ class Residues:
                 f"Products of {precision}-digit residues do not fit in int64 for "
                 f"p = {p} (at most {single} digits); use reduction='double'."
             )
+        self.reduction = reduction
+        self.powers = np.array([p**k for k in range(precision + 1)], dtype=np.int64)
+        self._reciprocal = 1.0 / self.modulus
+        self._reciprocal32 = np.float32(1.0 / self.modulus)
+        self._half = p ** math.ceil(precision / 2)
+        self._rest = p ** (precision - math.ceil(precision / 2))
+
+    def _setup(self, p, precision):
+        """Checks shared by `Residues` and `Limbs`, and the fields they share."""
+        p, precision = int(p), int(precision)
+        if not is_prime(p):
+            raise ValueError("`p` must be a prime.")
+        if precision < 1:
+            raise ValueError("`precision` must be at least 1.")
         if jnp.asarray(0, dtype=jnp.int64).dtype != jnp.int64:
             raise RuntimeError(
                 "p-adic arithmetic needs 64-bit integers: enable them with "
@@ -111,12 +129,6 @@ class Residues:
         self.p = p
         self.precision = precision
         self.modulus = p**precision
-        self.reduction = reduction
-        self.powers = np.array([p**k for k in range(precision + 1)], dtype=np.int64)
-        self._reciprocal = 1.0 / self.modulus
-        self._reciprocal32 = np.float32(1.0 / self.modulus)
-        self._half = p ** math.ceil(precision / 2)
-        self._rest = p ** (precision - math.ceil(precision / 2))
         self._inverses = np.array(
             [pow(a, -1, p) if a % p else 0 for a in range(p)], dtype=np.int64
         )
@@ -128,11 +140,13 @@ class Residues:
         """`x` reduced to `[0, p^K)` as an `int64` array. Accepts any integers,
         negative ones included.
         """
-        if not isinstance(x, jax.Array) and np.asarray(x).dtype == object:
-            x = (np.asarray(x) % self.modulus).astype(np.int64)
+        if _on_host(x):
+            x = np.asarray(np.asarray(x).astype(object) % self.modulus).astype(np.int64)
         x = jnp.asarray(x)
         if not jnp.issubdtype(x.dtype, jnp.integer):
             raise ValueError("p-adic integers must be given as integer arrays.")
+        if x.dtype == jnp.uint64:  # reduce before the cast, which would wrap past 2^63
+            x = jnp.remainder(x, jnp.uint64(self.modulus))
         return jnp.remainder(x.astype(jnp.int64), self.modulus)
 
     def decode(self, x):
@@ -282,28 +296,14 @@ class Limbs(Residues):
     extra = 1
 
     def __init__(self, p: int, precision: int):
-        p, precision = int(p), int(precision)
-        if not is_prime(p):
-            raise ValueError("`p` must be a prime.")
-        if precision < 1:
-            raise ValueError("`precision` must be at least 1.")
-        if jnp.asarray(0, dtype=jnp.int64).dtype != jnp.int64:
-            raise RuntimeError(
-                "p-adic arithmetic needs 64-bit integers: enable them with "
-                "`jax.config.update('jax_enable_x64', True)`."
-            )
-        self.p = p
-        self.precision = precision
-        self.modulus = p**precision
+        self._setup(p, precision)
+        p, precision = self.p, self.precision
         self.reduction = "limbs"
         self.width = limb_width(p, precision)
         self.limbs = -(-precision // self.width)
         self.base = p**self.width
         self.top = p ** (precision - self.width * (self.limbs - 1))
         self.powers = np.array([p**k for k in range(self.width + 1)], dtype=np.int64)
-        self._inverses = np.array(
-            [pow(a, -1, p) if a % p else 0 for a in range(p)], dtype=np.int64
-        )
 
     def __repr__(self) -> str:
         return f"Limbs(p={self.p}, precision={self.precision}, limbs={self.limbs})"
@@ -322,18 +322,18 @@ class Limbs(Residues):
         return [x // self.base**k % self.base for k in range(self.limbs)]
 
     def asarray(self, x):
-        if not isinstance(x, jax.Array) and np.asarray(x).dtype == object:
-            array = np.asarray(x) % self.modulus
+        if _on_host(x):
+            array = np.asarray(x).astype(object) % self.modulus
             limbs = [array // self.base**k % self.base for k in range(self.limbs)]
             return jnp.asarray(np.stack(limbs, axis=-1).astype(np.int64))
         x = jnp.asarray(x)
         if not jnp.issubdtype(x.dtype, jnp.integer):
             raise ValueError("p-adic integers must be given as integer arrays.")
-        rest = x.astype(jnp.int64)
+        rest = x if x.dtype == jnp.uint64 else x.astype(jnp.int64)  # uint64 split as is
         out = []
         for k in range(self.limbs):
             base = self.top if k == self.limbs - 1 else self.base
-            out.append(jnp.remainder(rest, base))
+            out.append(jnp.remainder(rest, base).astype(jnp.int64))
             rest = jnp.floor_divide(rest, self.base)
         return jnp.stack(out, axis=-1)
 
@@ -442,31 +442,24 @@ def make_residues(p: int, precision: int, reduction: str | None = None) -> Resid
     return Residues(p, precision, reduction)
 
 
-def scan_horner(residues: Residues, coefficients, x):
+def scan_horner(residues: Residues, coefficients, x, index=None):
     """`sum_i c[..., i] x^i` along the last value axis of `coefficients`, by Horner's
-    rule. The loop is unrolled so that it fuses with the evaluation of the
-    coefficients: on a GPU this was faster than `lax.scan` (up to four times) and
-    than Estrin's scheme or two interleaved chains, for every degree and in one
-    word, two words and limbs alike.
+    rule. With `index`, `coefficients` is a table `(rows, *rest, deg + 1)` and point
+    `b` reads row `index[b]`, one coefficient at a time inside the loop, so the rows
+    are never gathered whole; the result is `(batch, *rest)`. The loop is unrolled so
+    that it fuses with the evaluation of the coefficients: on a GPU this was faster
+    than `lax.scan` (up to four times) and than Estrin's scheme or two interleaved
+    chains, for every degree and in one word, two words and limbs alike.
     """
     xs = jnp.moveaxis(coefficients, -1 - residues.extra, 0)
-    out = jnp.broadcast_to(xs[-1], jnp.broadcast_shapes(xs.shape[1:], jnp.shape(x)))
-    for k in range(xs.shape[0] - 2, -1, -1):
-        out = residues.add(residues.mul(out, x), xs[k])
-    return out
 
+    def column(k):
+        return xs[k] if index is None else xs[k][index]
 
-def gather_horner(residues: Residues, table, index, x):
-    """`sum_i table[index, ..., i] x^i`, gathering row `index` one coefficient at a
-    time inside Horner's loop, unrolled as in `scan_horner`. `table` has shape
-    `(rows, *rest, deg + 1)`, `index` and `x` broadcast to the batch; returns
-    `(batch, *rest)`.
-    """
-    xs = jnp.moveaxis(table, -1 - residues.extra, 0)
-    shape = jnp.broadcast_shapes((index.shape[0],) + xs.shape[2:], jnp.shape(x))
-    out = jnp.broadcast_to(xs[-1][index], shape)
+    out = column(-1)
+    out = jnp.broadcast_to(out, jnp.broadcast_shapes(out.shape, jnp.shape(x)))
     for k in range(xs.shape[0] - 2, -1, -1):
-        out = residues.add(residues.mul(out, x), xs[k][index])
+        out = residues.add(residues.mul(out, x), column(k))
     return out
 
 

@@ -4,7 +4,7 @@ from fractions import Fraction
 import jax.numpy as jnp
 import numpy as np
 
-from .arithmetic import gather_horner, Residues, scan_horner, simplex, valuation
+from .arithmetic import Residues, scan_horner, simplex, valuation
 from .series import PowerSeries
 
 
@@ -189,11 +189,8 @@ def evaluate(residues: Residues, coefficients, x, index=None):
     for j in reversed(range(d)):
         rest = out.ndim - residues.extra - 2
         point = x[:, j].reshape((-1,) + (1,) * rest + x.shape[2:])
-        if index is not None:
-            out = gather_horner(residues, out, index, point)
-            index = None
-        else:
-            out = scan_horner(residues, out, point)
+        out = scan_horner(residues, out, point, index)
+        index = None
     return out
 
 

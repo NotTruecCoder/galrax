@@ -11,11 +11,18 @@ and minimal actions of several such maps on balls are computed exactly, and so a
 bounds on the small divisors of normal forms. Discrete maps `x -> T(x)` are analysed
 through their cycle tree and minimal decomposition, and orbits of polynomial maps of
 `Z_p^d` without attracting directions through the flow of a power of the map:
-jump-ahead, return sets and zeros of linear recurrences. Formal groups of any
+jump-ahead, return sets and zeros of linear recurrences, and zero sets of integer
+orbits certified over all places by the adelic sieve ABS. Formal groups of any
 dimension give logarithms as chart coordinates, and Chabauty functions are solved in
 residue discs. Flows run on `int64` JAX arrays, with any number of digits.
 """
 
+from .adelic import (
+    henon_zeros as henon_zeros,
+    map_zeros as map_zeros,
+    recurrence_zeros as recurrence_zeros,
+    ZeroSet as ZeroSet,
+)
 from .arithmetic import Limbs as Limbs, Residues as Residues
 from .equilibria import Equilibrium as Equilibrium, Linearization as Linearization
 from .events import EventSet as EventSet, PAdicEvent as PAdicEvent

@@ -8,19 +8,18 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "benchmarks"))
 
-from adelic_sieve import (  # noqa: E402
+from adelic_sieve import henon_cases, quadratic_cases, solve  # noqa: E402
+from galrax.padic import henon_zeros, map_zeros, recurrence_zeros  # noqa: E402
+from galrax.padic.adelic import (  # noqa: E402
     depth_record,
-    henon_cases,
+    exact_zeros,
     henon_real,
-    quadratic_cases,
     real_record,
     reversed_recurrence,
-    solve,
     stepper,
     verdict,
 )
 from nonlinear_skolem import exact_hits  # noqa: E402
-from skolem import exact_zeros  # noqa: E402
 
 
 def test_nilpotent_branch_bounds_the_zeros():
@@ -92,8 +91,8 @@ def test_recurrence_over_z(monkeypatch):
 
 def test_dominant_roots_bound_the_zeros():
     pytest.importorskip("flint")
-    from adelic_sieve import dominant
-    from baker import complex_pair
+    from galrax.padic.adelic import dominant
+    from galrax.padic.baker import complex_pair
 
     assert dominant((1, 1), (0, 1)) == 1  # Fibonacci: the zero n = 0 only
     assert dominant((0, -1), (1, 0)) is None and complex_pair((0, -1), (1, 0)) is None  # i^n
@@ -112,3 +111,21 @@ def test_dominant_roots_bound_the_zeros():
         if N is not None:
             bounds[kind] += 1
             assert not [n for n in exact_zeros(list(r), list(u), N + 100) if n >= N], (r, u)
+
+
+def test_public_zero_sets():
+    pytest.importorskip("flint")
+    import jax
+
+    jax.config.update("jax_enable_x64", True)
+    # u_n = u_{n-1} + 2 u_{n-2} from (0, 1): u_n = (2^n - (-1)^n) / 3, zero at n = 0 only
+    found = recurrence_zeros((1, 2), (0, 1))
+    assert found.certified and found.zeros == (0,)
+    # x -> x^2 + 1 from 0: 0, 1, 2, 5, ...; modulo 3 the cycle is the fixed point 2,
+    # so the target 3 can only be hit before it, and it is not
+    found = map_zeros([{(2,): 1, (0,): 1}], (0,), 3)
+    assert found.certified and found.zeros == ()
+    assert henon_zeros(1, [0, 0, 0], (0, 1), 0) == henon_zeros(1, (0, 0, 0), [0, 1], 0)
+    assert henon_zeros(1, [0, 0, 0], (0, 1), 0).period == 2
+    with pytest.raises(ValueError):
+        recurrence_zeros((1, 0), (1, 1))
