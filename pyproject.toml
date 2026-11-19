@@ -34,8 +34,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering :: Mathematics"
 ]
-# diffrax._term.WrapTerm is private, hence the upper bound.
-dependencies = ["diffrax>=0.7,<0.8", "equinox>=0.11.10", "jax>=0.4.38", "jaxtyping>=0.2.24", "numpy"]
+dependencies = ["diffrax>=0.7", "equinox>=0.11.10", "jax>=0.4.38", "jaxtyping>=0.2.24", "numpy"]
 description = "Exact solvers for differential equations over the p-adic numbers and on finite groups, in JAX: p-adic flows, return sets, formal groups and Chabauty, invertible p-adic layers, ultrametric diffusion."
 keywords = ["jax", "p-adic", "dynamical-systems", "differential-equations", "number-theory", "finite-groups", "formal-groups", "chabauty", "diffrax"]
 license = {file = "LICENSE"}

@@ -38,7 +38,7 @@ What it can do:
 pip install galrax          # or galrax[abs] for the real place of recurrences, galrax[plot] for pictures
 ```
 
-You need Python 3.11+ and JAX; `diffrax` (0.7.x) is installed as a dependency. The $p$-adic code needs 64-bit integers: call `jax.config.update("jax_enable_x64", True)` first.
+You need Python 3.11+ and JAX; `diffrax` (0.7 or later) is installed as a dependency. The $p$-adic code needs 64-bit integers: call `jax.config.update("jax_enable_x64", True)` first.
 
 ## Exact p-adic flows
 

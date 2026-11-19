@@ -24,7 +24,6 @@ from diffrax import (
     SaveAt,
     Tsit5,
 )
-from diffrax._term import WrapTerm  # private: pinned to diffrax>=0.7,<0.8
 
 from .._types import Args, BoolScalarLike, DenseInfo, RealScalarLike, VF, Y
 from .fourier import AbstractSpectralTransform, FourierTransform
@@ -33,7 +32,8 @@ from .terms import AbstractExponentialTerm, to_complex, to_real
 
 
 def _unwrap(term: AbstractTerm) -> AbstractTerm:
-    while isinstance(term, WrapTerm):
+    # diffeqsolve wraps terms in its private WrapTerm (`term`, `direction`): duck-typed.
+    while not isinstance(term, AbstractExponentialTerm) and hasattr(term, "direction"):
         term = term.term
     return term
 
