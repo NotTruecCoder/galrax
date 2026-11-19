@@ -1,6 +1,7 @@
 from collections.abc import Callable
-from typing import ClassVar
+from typing import Any, ClassVar
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
@@ -43,20 +44,32 @@ def _unwrap(term: AbstractTerm) -> AbstractTerm:
 #
 
 
-class _CoordinateNonlinearity:
-    def __init__(self, problem: GroupODE, transform: AbstractSpectralTransform):
-        self.problem = problem
-        self.transform = transform
+class _CoordinateNonlinearity(eqx.Module):
+    # A module, not a closure over the problem: the compiled solve is then reused
+    # by later problems with the same transform and nonlinearity.
+    transform: AbstractSpectralTransform = eqx.field(static=True)
+    nonlinearity: Callable | None = eqx.field(static=True)
+    real: bool = eqx.field(static=True)
+    args: Any
 
     def __call__(self, t, y, args):
-        problem = self.problem
-        if problem.nonlinearity is None:
+        if self.nonlinearity is None:
             return jtu.tree_map(jnp.zeros_like, y)
         p = self.transform.from_coordinates(y)
-        if problem.is_real:
+        if self.real:
             p = p.real
-        value = jnp.asarray(problem.nonlinearity(t, p, problem.args)).astype(p.dtype)
+        value = jnp.asarray(self.nonlinearity(t, p, self.args)).astype(p.dtype)
         return self.transform.to_coordinates(value)
+
+
+class _Sum(eqx.Module):
+    linear: AbstractTerm
+    nonlinear: AbstractTerm
+
+    def __call__(self, t, y, args):
+        return jtu.tree_map(
+            jnp.add, self.linear.vf(t, y, args), self.nonlinear.vf(t, y, args)
+        )
 
 
 def fourier_terms(
@@ -69,7 +82,11 @@ def fourier_terms(
     transform = _check_transform(problem, transform)
     return MultiTerm(
         transform.linear_term(problem),
-        ODETerm(_CoordinateNonlinearity(problem, transform)),
+        ODETerm(
+            _CoordinateNonlinearity(
+                transform, problem.nonlinearity, problem.is_real, problem.args
+            )
+        ),
     )
 
 
@@ -79,12 +96,7 @@ def fourier_term(
     """The whole vector field of `problem` in the coordinates of `transform`, as an
     `ODETerm` for any Diffrax solver.
     """
-    linear, nonlinear = fourier_terms(problem, transform).terms
-
-    def vector_field(t, y, args):
-        return jtu.tree_map(jnp.add, linear.vf(t, y, args), nonlinear.vf(t, y, args))
-
-    return ODETerm(vector_field)
+    return ODETerm(_Sum(*fourier_terms(problem, transform).terms))
 
 
 def physical_term(problem: GroupODE) -> ODETerm:
@@ -166,11 +178,13 @@ class Lawson(AbstractAdaptiveSolver):
         a = [[]] + [[float(aij) for aij in row] for row in tableau.a_lower]
         dt = t1 - t0
         h = wrapped_linear.contr(t0, t1)
-        exponentials = {}
+        taus = sorted(
+            {*c, 1.0, *(1.0 - ci for ci in c)}
+            | {c[i] - c[j] for i in range(len(c)) for j, aij in enumerate(a[i]) if aij}
+        )
+        exponentials = dict(zip(taus, linear.exponentials([tau * h for tau in taus])))
 
         def flow(tau, x):
-            if tau not in exponentials:
-                exponentials[tau] = linear.exponential(tau * h)
             return linear.apply(exponentials[tau], x)
 
         def combine(weighted):

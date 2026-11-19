@@ -645,3 +645,49 @@ def test_solver_errors():
         solve_group_ode(nonlinear, "tsit5")
     with pytest.raises(TypeError):
         solve_group_ode("problem")
+
+
+def test_batched_exponentials_match_one_at_a_time():
+    group = _GROUPS["S4"]
+    problem = _nonlinear_problem(group)
+    term = FourierTransform(group).linear_term(problem)
+    taus = [0.0, 0.3, -0.7, 1.0]
+    for tau, batched in zip(taus, term.exponentials(taus)):
+        for (a, b), (c, d) in zip(batched, term.exponential(tau)):
+            assert _close(a, c, 1e-12) and _close(b, d, 1e-12)
+
+
+def test_repeated_solves_reuse_the_compiled_solve():
+    group = _GROUPS["S3"]
+    traces = []
+
+    def reaction(t, p, args):
+        traces.append(None)
+        return -(p**3)
+
+    transform = FourierTransform(group)
+    for seed in range(2):
+        y0 = np.random.default_rng(seed).standard_normal(group.n)
+        problem = GroupODE(
+            group,
+            y0,
+            0.0,
+            1.0,
+            right_kernel=-np.eye(group.n)[group.ed],
+            nonlinearity=reaction,
+        )
+        solve_group_ode(problem, transform=transform)
+        if seed == 0:
+            first = len(traces)
+    # Compiling traces the nonlinearity many times; a cached solve at most once, for
+    # the shape of its output.
+    assert first > 4 and len(traces) - first <= 1
+
+
+def test_cyclic_group_builds_its_table_on_first_use():
+    group = Group.cyclic(6)
+    assert "kaili" not in group.__dict__
+    assert group.ed == 0 and np.array_equal(group.inv, [0, 5, 4, 3, 2, 1])
+    elements = np.arange(6)
+    assert np.array_equal(group.kaili, (elements[:, None] + elements) % 6)
+    assert np.array_equal(group.degrees(), np.ones(6))

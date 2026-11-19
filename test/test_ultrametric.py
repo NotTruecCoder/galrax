@@ -395,3 +395,13 @@ def test_all_pairs_of_levels_are_orthogonal_under_the_operator():
     for i, j in itertools.product(range(integers.size), repeat=2):
         if i != j:
             assert abs(matrix[i, j]) < 1e-10
+
+
+def test_large_kozyrev_solve_needs_no_cayley_table():
+    integers = PAdicIntegers(2, 14)
+    operator = UltrametricOperator.vladimirov(integers, 1.0)
+    f = _random(integers)
+    problem = operator.problem(f, 0.0, 0.5)
+    solution = solve_group_ode(problem, transform=KozyrevTransform(integers))
+    assert np.allclose(solution.ys[-1], operator.evolve(f, 0.5), atol=1e-10)
+    assert "kaili" not in integers.group.__dict__

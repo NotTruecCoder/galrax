@@ -56,8 +56,7 @@ class Group:
         """The cyclic group `Z_n`, with element `k` standing for `k mod n`."""
         if n < 1:
             raise ValueError("`n` must be positive.")
-        elements = np.arange(n)
-        return cls((elements[:, None] + elements[None, :]) % n, check=False)
+        return _Cyclic(n)
 
     @classmethod
     def from_permutations(cls, generators) -> "Group":
@@ -291,3 +290,19 @@ def _clean(x: np.ndarray, atol: float = 1e-10) -> np.ndarray:
     x.real[np.abs(x.real) < atol] = 0
     x.imag[np.abs(x.imag) < atol] = 0
     return x
+
+
+class _Cyclic(Group):
+    """`Z_n` with its `O(n^2)` Cayley table built on first use: solvers that work in
+    a transform adapted to `Z_n`, such as the Kozyrev wavelets, never need it.
+    """
+
+    def __init__(self, n: int):
+        self.n = int(n)
+        self.ed = 0
+        self.inv = -np.arange(self.n) % self.n
+
+    @functools.cached_property
+    def kaili(self) -> np.ndarray:
+        elements = np.arange(self.n, dtype=np.int64)
+        return (elements[:, None] + elements[None, :]) % self.n

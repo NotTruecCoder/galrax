@@ -43,8 +43,9 @@ class PAdicIntegers:
 
     @functools.cached_property
     def group(self) -> Group:
-        """The additive group `Z/p^n`, built on first use. It stores a Cayley table of
-        `p^{2n}` entries, so it is meant for a few thousand points at most.
+        """The additive group `Z/p^n`, built on first use. Its Cayley table of `p^{2n}`
+        entries is only built when needed (Fourier transforms on the group, solving
+        in physical space); `KozyrevTransform` never needs it.
         """
         return Group.cyclic(self.size)
 

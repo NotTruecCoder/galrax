@@ -38,6 +38,10 @@ class AbstractExponentialTerm(AbstractTerm):
     def apply(exponential, x) -> list:
         """`e^{tau L} x` for complex blocks `x`, given `exponential(tau)`."""
 
+    def exponentials(self, taus) -> list:
+        """`[exponential(tau) for tau in taus]`; override to share the work."""
+        return [self.exponential(tau) for tau in taus]
+
     def contr(self, t0: RealScalarLike, t1: RealScalarLike, **kwargs) -> RealScalarLike:
         return t1 - t0
 
@@ -105,6 +109,37 @@ class FourierLinearTerm(AbstractExponentialTerm):
                 None if b is None else jsl.expm(jnp.asarray(tau, b.dtype) * b),
             )
             for a, b in zip(left, right)
+        ]
+
+    def exponentials(self, taus) -> list:
+        """`exponential(tau)` for each of `taus`, with one batched `expm` per block
+        size: separate `expm` calls make the compiled program, and its compile time,
+        grow with the number of times and representations.
+        """
+        taus = jnp.stack([jnp.asarray(tau) for tau in taus])
+
+        def batched(blocks):
+            out = [None] * len(blocks)
+            sizes = {}
+            for k, b in enumerate(blocks):
+                if b is not None:
+                    sizes.setdefault(b.shape, []).append(k)
+            for (d, _), ks in sizes.items():
+                stack = jnp.stack([blocks[k] for k in ks])
+                scaled = taus[:, None, None, None].astype(stack.dtype) * stack[None]
+                e = jsl.expm(scaled.reshape(-1, d, d)).reshape(scaled.shape)
+                for j, k in enumerate(ks):
+                    out[k] = e[:, j]
+            return out
+
+        left, right = self._blocks()
+        left, right = batched(left), batched(right)
+        return [
+            [
+                (None if a is None else a[i], None if b is None else b[i])
+                for a, b in zip(left, right)
+            ]
+            for i in range(len(taus))
         ]
 
     @staticmethod
