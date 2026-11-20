@@ -72,3 +72,15 @@ def test_exit_found_without_a_certificate():
     assert not found.certified and found.known == (5,) and found.searched >= 120
     found = recurrence_zeros((1, 1), (2, 3))
     assert found.known == found.zeros == (-3,) and found.searched == 200
+
+
+def test_lazy_import():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; from galrax.padic import charpoly_to_r; "
+        "assert 'jax' not in sys.modules; import galrax.padic as pf; "
+        "assert 'PAdicFlow' in dir(pf) and pf.PAdicFlow"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)

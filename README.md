@@ -1,6 +1,12 @@
 <h1 align='center'>Galrax</h1>
 <h2 align='center'>Differential equations on finite groups and over the p-adic numbers, in JAX.</h2>
 
+<p align='center'>
+<a href='https://colab.research.google.com/github/NotTruecCoder/galrax/blob/main/examples/quickstart.ipynb'><img src='https://colab.research.google.com/assets/colab-badge.svg' alt='Open in Colab'></a>
+<a href='https://github.com/NotTruecCoder/galrax/actions/workflows/run_tests.yml'><img src='https://github.com/NotTruecCoder/galrax/actions/workflows/run_tests.yml/badge.svg' alt='Tests'></a>
+<a href='https://pypi.org/project/galrax/'><img src='https://img.shields.io/pypi/v/galrax' alt='PyPI'></a>
+</p>
+
 Galrax is a JAX library with three parts. It started as a fork of [Diffrax](https://github.com/patrick-kidger/diffrax) and now uses Diffrax as an ordinary dependency, for the solvers of `galrax.groups`.
 
 - **`galrax.groups`**: differential equations whose unknown is a function on a finite group, such as heat equations on Cayley graphs or reaction–diffusion on a group.
@@ -201,6 +207,18 @@ pf.value_times([1, 1], [0, 1], 2).zeros  # F_n = 2
 # (-3, 3)
 pf.loop_exit([{(1, 0): 1, (0, 0): 1}, {(0, 1): 2}], (0, 1), {(0, 1): 1, (0, 0): -48})
 # None: (i, x) -> (i + 1, 2x) from (0, 1) never reaches x = 48
+```
+
+From Sage (`sage -pip install galrax[abs]`), the same functions take Sage polynomials, vectors, `DynamicalSystem_affine`, `BinaryRecurrenceSequence` and characteristic polynomials:
+
+```python
+import jax; jax.config.update("jax_enable_x64", True)
+from galrax.padic import charpoly_to_r, map_zeros, recurrence_zeros
+
+R.<x, y> = ZZ[]
+map_zeros(DynamicalSystem_affine([y, x*y + 1]), vector([1, 1]), 7).zeros  # (4,)
+recurrence_zeros(BinaryRecurrenceSequence(1, 1, 0, 1)).zeros  # (0,): Fibonacci
+recurrence_zeros(charpoly_to_r(matrix([[0, 1], [1, 1]]).charpoly()), [0, 1]).zeros  # (0,)
 ```
 
 The same from the shell, after `pip install`; `--json` gives one JSON object, `--certificate` the records (prime, depth, type, tail, cover), and the exit code is 0 when certified, 3 when not, 2 on bad input:

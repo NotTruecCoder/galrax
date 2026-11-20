@@ -17,69 +17,128 @@ dimension give logarithms as chart coordinates, and Chabauty functions are solve
 residue discs. Flows run on `int64` JAX arrays, with any number of digits.
 """
 
-from .adelic import (
-    etale_primes as etale_primes,
-    henon_zeros as henon_zeros,
-    map_zeros as map_zeros,
-    recurrence_zeros as recurrence_zeros,
-    ZeroSet as ZeroSet,
-)
-from .applications import (
-    charpoly_to_r as charpoly_to_r,
-    hypersurface_times as hypersurface_times,
-    loop_exit as loop_exit,
-    value_times as value_times,
-)
-from .arithmetic import Limbs as Limbs, Residues as Residues
-from .equilibria import Equilibrium as Equilibrium, Linearization as Linearization
-from .events import EventSet as EventSet, PAdicEvent as PAdicEvent
-from .flow import PAdicFlow as PAdicFlow, TimeDependentFlow as TimeDependentFlow
-from .formal import (
-    chabauty_zeros as chabauty_zeros,
-    disc_differentials as disc_differentials,
-    EllipticCurve as EllipticCurve,
-    FormalGroup as FormalGroup,
-    FormalGroupFlow as FormalGroupFlow,
-    height_bound as height_bound,
-    linear_degree as linear_degree,
-    logarithmic_exponents as logarithmic_exponents,
-    tiny_integrals as tiny_integrals,
-    weierstrass_omega as weierstrass_omega,
-)
-from .interpolation import (
-    commutator as commutator,
-    lie_bracket as lie_bracket,
-    MinimalAction as MinimalAction,
-    time_one_field as time_one_field,
-)
-from .integrable import (
-    EliassonVey as EliassonVey,
-    IntegrableSystem as IntegrableSystem,
-)
-from .koopman import (
-    advection_diffusion as advection_diffusion,
-    KoopmanOperator as KoopmanOperator,
-)
-from .maps import (
-    Component as Component,
-    Cycle as Cycle,
-    matrix_power_index as matrix_power_index,
-    PAdicMap as PAdicMap,
-)
-from .normal_form import (
-    NormalForm as NormalForm,
-    smith_exponent_bound as smith_exponent_bound,
-)
-from .plot import (
-    plot_advection_diffusion as plot_advection_diffusion,
-    plot_phase_portrait as plot_phase_portrait,
-    plot_trajectory as plot_trajectory,
-)
-from .return_set import (
-    companion as companion,
-    linear as linear,
-    Orbit as Orbit,
-    recurrence_times as recurrence_times,
-)
-from .roots import Ball as Ball
-from .series import PowerSeries as PowerSeries
+import importlib
+from typing import TYPE_CHECKING
+
+
+# Submodules load on first use, so `from galrax.padic import recurrence_zeros` does not
+# import JAX until a function that needs it runs.
+_EXPORTS = {
+    "adelic": (
+        "etale_primes",
+        "henon_zeros",
+        "map_zeros",
+        "recurrence_zeros",
+        "ZeroSet",
+    ),
+    "applications": ("charpoly_to_r", "hypersurface_times", "loop_exit", "value_times"),
+    "arithmetic": ("Limbs", "Residues"),
+    "equilibria": ("Equilibrium", "Linearization"),
+    "events": ("EventSet", "PAdicEvent"),
+    "flow": ("PAdicFlow", "TimeDependentFlow"),
+    "formal": (
+        "chabauty_zeros",
+        "disc_differentials",
+        "EllipticCurve",
+        "FormalGroup",
+        "FormalGroupFlow",
+        "height_bound",
+        "linear_degree",
+        "logarithmic_exponents",
+        "tiny_integrals",
+        "weierstrass_omega",
+    ),
+    "interpolation": ("commutator", "lie_bracket", "MinimalAction", "time_one_field"),
+    "integrable": ("EliassonVey", "IntegrableSystem"),
+    "koopman": ("advection_diffusion", "KoopmanOperator"),
+    "maps": ("Component", "Cycle", "matrix_power_index", "PAdicMap"),
+    "normal_form": ("NormalForm", "smith_exponent_bound"),
+    "plot": ("plot_advection_diffusion", "plot_phase_portrait", "plot_trajectory"),
+    "return_set": ("companion", "linear", "Orbit", "recurrence_times"),
+    "roots": ("Ball",),
+    "series": ("PowerSeries",),
+}
+_MODULE = {name: module for module, names in _EXPORTS.items() for name in names}
+__all__ = sorted(_MODULE)
+
+
+def __getattr__(name: str):
+    module = _MODULE.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(importlib.import_module(f".{module}", __name__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted({*globals(), *_MODULE})
+
+
+if TYPE_CHECKING:
+    from .adelic import (
+        etale_primes as etale_primes,
+        henon_zeros as henon_zeros,
+        map_zeros as map_zeros,
+        recurrence_zeros as recurrence_zeros,
+        ZeroSet as ZeroSet,
+    )
+    from .applications import (
+        charpoly_to_r as charpoly_to_r,
+        hypersurface_times as hypersurface_times,
+        loop_exit as loop_exit,
+        value_times as value_times,
+    )
+    from .arithmetic import Limbs as Limbs, Residues as Residues
+    from .equilibria import Equilibrium as Equilibrium, Linearization as Linearization
+    from .events import EventSet as EventSet, PAdicEvent as PAdicEvent
+    from .flow import PAdicFlow as PAdicFlow, TimeDependentFlow as TimeDependentFlow
+    from .formal import (
+        chabauty_zeros as chabauty_zeros,
+        disc_differentials as disc_differentials,
+        EllipticCurve as EllipticCurve,
+        FormalGroup as FormalGroup,
+        FormalGroupFlow as FormalGroupFlow,
+        height_bound as height_bound,
+        linear_degree as linear_degree,
+        logarithmic_exponents as logarithmic_exponents,
+        tiny_integrals as tiny_integrals,
+        weierstrass_omega as weierstrass_omega,
+    )
+    from .integrable import (
+        EliassonVey as EliassonVey,
+        IntegrableSystem as IntegrableSystem,
+    )
+    from .interpolation import (
+        commutator as commutator,
+        lie_bracket as lie_bracket,
+        MinimalAction as MinimalAction,
+        time_one_field as time_one_field,
+    )
+    from .koopman import (
+        advection_diffusion as advection_diffusion,
+        KoopmanOperator as KoopmanOperator,
+    )
+    from .maps import (
+        Component as Component,
+        Cycle as Cycle,
+        matrix_power_index as matrix_power_index,
+        PAdicMap as PAdicMap,
+    )
+    from .normal_form import (
+        NormalForm as NormalForm,
+        smith_exponent_bound as smith_exponent_bound,
+    )
+    from .plot import (
+        plot_advection_diffusion as plot_advection_diffusion,
+        plot_phase_portrait as plot_phase_portrait,
+        plot_trajectory as plot_trajectory,
+    )
+    from .return_set import (
+        companion as companion,
+        linear as linear,
+        Orbit as Orbit,
+        recurrence_times as recurrence_times,
+    )
+    from .roots import Ball as Ball
+    from .series import PowerSeries as PowerSeries
