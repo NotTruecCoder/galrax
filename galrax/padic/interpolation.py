@@ -538,12 +538,19 @@ class OrbitClosure:
                 heapq.heappush(heap, (new, count, word, name, v))
         return kept
 
-    def chart(self, t) -> tuple:
-        """`F(t)` modulo `p^K`, for `t` in `Z_p^rank`."""
-        t = [int(v) for v in np.atleast_1d(np.asarray(t, dtype=object))]
-        if len(t) != self.rank:
+    def chart(self, t) -> np.ndarray:
+        """`F(t)` modulo `p^K`. Times have shape `(..., rank)` (or `(...)` for rank
+        one) and the points shape `(..., d)`.
+        """
+        t = np.asarray(t, dtype=object)
+        if self.rank == 1 and (t.ndim == 0 or t.shape[-1] != 1):
+            t = t[..., None]
+        if t.ndim == 0 or t.shape[-1] != self.rank:
             raise ValueError(f"`t` must have {self.rank} coordinates.")
-        y = list(self.point)
-        for (h, scale), s in reversed(list(zip(self._chart, t))):
-            y = self._power(h, scale * s, y)
-        return tuple(y)
+        out = np.empty(t.shape[:-1] + (self.dimension,), dtype=object)
+        for index in np.ndindex(t.shape[:-1]):
+            y = list(self.point)
+            for (h, scale), s in reversed(list(zip(self._chart, t[index]))):
+                y = self._power(h, scale * int(s), y)
+            out[index] = y
+        return out

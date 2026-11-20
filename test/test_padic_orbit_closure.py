@@ -1,5 +1,6 @@
 import itertools
 
+import numpy as np
 import pytest
 from galrax.padic import OrbitClosure
 from galrax.padic.arithmetic import valuation
@@ -99,3 +100,16 @@ def test_rejects_maps_far_from_the_identity():
         OrbitClosure(3, 6, [[{(1, 0): 2}, {(0, 1): 1}]], (0, 0))
     with pytest.raises(ValueError):
         OrbitClosure(2, 6, [[{(1, 0): 1, (0, 0): 2}, {(0, 1): 1}]], (0, 0))
+
+
+def test_chart_takes_arrays_of_times():
+    closure = OrbitClosure(3, 6, SHEAR, (0, 0))
+    times = np.array([[[2, 5], [0, 1]], [[1, 0], [7, 7]]], dtype=object)
+    images = closure.chart(times)
+    assert images.shape == (2, 2, 2)
+    for index in np.ndindex(2, 2):
+        assert list(images[index]) == list(closure.chart(times[index]))
+    arc = OrbitClosure(3, 6, LINE, (0, 0))
+    assert arc.chart([1, 2, 3]).shape == (3, 2) and list(arc.chart(2)) == [6, 0]
+    with pytest.raises(ValueError):
+        closure.chart([1, 2, 3])
