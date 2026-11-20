@@ -48,7 +48,13 @@ _EXPORTS = {
         "tiny_integrals",
         "weierstrass_omega",
     ),
-    "interpolation": ("commutator", "lie_bracket", "MinimalAction", "time_one_field"),
+    "interpolation": (
+        "commutator",
+        "lie_bracket",
+        "MinimalAction",
+        "OrbitClosure",
+        "time_one_field",
+    ),
     "integrable": ("EliassonVey", "IntegrableSystem"),
     "koopman": ("advection_diffusion", "KoopmanOperator"),
     "maps": ("Component", "Cycle", "matrix_power_index", "PAdicMap"),
@@ -113,6 +119,7 @@ if TYPE_CHECKING:
         commutator as commutator,
         lie_bracket as lie_bracket,
         MinimalAction as MinimalAction,
+        OrbitClosure as OrbitClosure,
         time_one_field as time_one_field,
     )
     from .koopman import (

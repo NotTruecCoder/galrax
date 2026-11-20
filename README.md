@@ -28,7 +28,7 @@ What it can do:
 - **Evaluate the flow exactly on the GPU.** Time is split into a tabulated part and a $p$-adically small part, as in table-driven `exp`, and space is re-expanded around the centres of small balls. For 19 digits of $\mathbb{Z}_3$ the degree drops from 33 to 2, and a laptop GPU computes $2 \times 10^8$ to $6 \times 10^8$ exact values per second, depending on its clock. Any number of digits works, through two-word and multi-limb arithmetic.
 - **Describe the orbits.** In one dimension the orbit of $x$ is exactly the ball of radius $|f(x)|_p$ around it, traversed at constant speed. In any dimension there are flow-box coordinates, computed by Newton's method, which give hitting times, return times and orbit averages by formula.
 - **Find events, equilibria and linearisations.** Event sets are finite unions of balls in time, found by refinement; equilibria are certified by Hensel's lemma.
-- **Interpolate iterates and certify minimal actions.** A map congruent to the identity modulo $p$ is the time-one map of exactly one field, computed from the iterates; several such maps whose displacements at a point form a basis of $p^k\mathbb{Z}_p^d$ generate a group acting minimally on that ball, with an explicit isometric chart.
+- **Interpolate iterates and certify minimal actions.** A map congruent to the identity modulo $p$ is the time-one map of exactly one field, computed from the iterates; several such maps whose displacements at a point form a basis of $p^k\mathbb{Z}_p^d$ generate a group acting minimally on that ball, with an explicit isometric chart. When they do not span, iterated commutators fill the missing directions, as in Chow–Rashevsky: `OrbitClosure` names a ball, or an analytic disc of lower rank, in the orbit closure.
 - **Compute certified normal forms.** Near an equilibrium, the Poincaré–Dulac normal form is built through the Smith form of the homological operator over $\mathbb{Z}_p$. Complex eigenvalues, Jordan blocks, resonances and zero eigenvalues all go through the same algorithm. Each result comes with a certificate, rechecked in exact arithmetic, that the flow through the normal form is exact modulo $p^K$.
 - **Compute $p$-adic elliptic logarithms.** The formal logarithm of $\mathbb{G}_m$ or of an elliptic curve is the flow-box coordinate of an explicit field, so the flow machinery computes it exactly, together with multiples $[t]P$ for $p$-adic $t$.
 - **Analyse discrete maps.** Cycle trees and minimal decompositions of polynomial and 1-Lipschitz maps of $\mathbb{Z}_p$.
@@ -125,6 +125,13 @@ action = pf.MinimalAction(3, 8, [g, h], (0, 0))
 print(action.level)  # 1: <g, h> acts minimally on (0, 0) + 3 Z_3^2
 z = action.chart([5, 7])  # phi^g_5 o phi^h_7 (0, 0), an isometry of Z_3^2 onto the ball
 print(action.coordinates(z))  # [5 7]
+
+# (x + 3, y) and (x, y + 3x) move 0 only along x; their commutator moves it by (0, -9).
+shift = [{(1, 0): 1, (0, 0): 3}, {(0, 1): 1}]
+shear = [{(1, 0): 1}, {(0, 1): 1, (1, 0): 3}]
+closure = pf.OrbitClosure(3, 6, [shift, shear], (0, 0))
+print(closure.words, closure.levels)  # ('g1', '[g1, g2]') (1, 2): Smith exponents at 0
+print(closure.ball)  # Ball(center=(0, 0), level=2): (0, 0) + 9 Z_3^2 is in the closure
 
 print(pf.smith_exponent_bound([[3, 3], [0, 3]], n=4, p=3))  # (10, 26): rank, exponent bound
 print(pf.linear_degree([10, Fraction(28, 19)], p=3, threshold=12))  # 3: eigenvalues log_3
@@ -377,6 +384,7 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 | `PAdicFlow(p, precision, field)` | The flow of a polynomial or analytic field divisible by $p$: `flow`, `orbit_level`, `rectify`, `orbit_time`, `first_hitting_time`, `return_time`, `orbit_average`, `event_times`, `equilibria`, `linearization`, `normal_form`, `mahler_coefficients`. |
 | `PAdicFlow.from_time_one(p, precision, g)`, `time_one_field` | The flow whose time-one map is $g \equiv \mathrm{id} \pmod p$, and its field $\sum_j (-1)^{j-1}\Delta_g^j(\mathrm{id})/j$. |
 | `MinimalAction(p, precision, maps, point)` | $d$ such maps whose displacements at `point` form a basis of $p^k\mathbb{Z}_p^d$: `level`, `ball`, `chart`, `coordinates`. |
+| `OrbitClosure(p, precision, maps, point, depth=4)` | Any number of such maps, not commuting, whose displacements need not span: words in the generators and their iterated commutators with independent residues, by level. `rank`, `levels` (Smith exponents of their displacements at `point`), `words`, `ball` ($x_0 + p^k\mathbb{Z}_p^d$ in the orbit closure when the rank is $d$), `chart` (an isometry $\mathbb{Z}_p^{\mathrm{rank}} \to$ closure, scaled by $p^{-k}$: an arc for rank one). |
 | `smith_exponent_bound`, `height_bound`, `linear_degree` | Bounds on the Smith exponents of the homological operator: Hadamard for rational $A$, heights for eigenvalues $\log_p \alpha_i$. |
 | `TimeDependentFlow(p, precision, field)` | $dx/dt = f(t, x)$ from $t_0$ to $t_1 \in t_0 + p\,\mathbb{Z}_p$. |
 | `PAdicEvent`, `EventSet` | An event $g(\varphi_t(x)) = 0$ and its set of times, a finite union of balls. |
@@ -435,7 +443,7 @@ More pictures, for $p = 2, 3, 5, 7$, are in `imgs/padic/`.
 
 ## What is known and what is new
 
-Interpolation of iterates by Mahler series is due to Bell and Poonen; here it is inverted, computing the field of a map, and the product of the flows of several maps is the chart of Cantat–Jang, turned into a criterion for minimality on balls of explicit radius (for $d = 2$, $k = 1$ it is Jang's step for Markoff surfaces); cycles of polynomial maps and the permanence of their growth to desJardins–Zieve and Fan–Liao; one-dimensional $p$-adic linearisation to Herman–Yoccoz. That orbits in dimension one are balls is Mukhamedov's theorem. As far as we could find, the computational side is new: exact global flows in machine integers, flow-box coordinates by Newton's method, event sets by ball refinement, certified normal forms through Smith forms over $\mathbb{Z}_p$, formal logarithms computed as flow-box coordinates, and ABS, which certifies zero sets of integer orbits of nonlinear maps.
+Interpolation of iterates by Mahler series is due to Bell and Poonen; here it is inverted, computing the field of a map, and the product of the flows of several maps is the chart of Cantat–Jang, turned into a criterion for minimality on balls of explicit radius (for $d = 2$, $k = 1$ it is Jang's step for Markoff surfaces); with commutators it is a $p$-adic Chow–Rashevsky/Nagano statement with explicit radii, whose qualitative form (orbit closures are orbits of a $p$-adic analytic group) is Cantat–Xie's under their hypotheses; cycles of polynomial maps and the permanence of their growth to desJardins–Zieve and Fan–Liao; one-dimensional $p$-adic linearisation to Herman–Yoccoz. That orbits in dimension one are balls is Mukhamedov's theorem. As far as we could find, the computational side is new: exact global flows in machine integers, flow-box coordinates by Newton's method, event sets by ball refinement, certified normal forms through Smith forms over $\mathbb{Z}_p$, formal logarithms computed as flow-box coordinates, and ABS, which certifies zero sets of integer orbits of nonlinear maps.
 
 ## Development
 
@@ -456,7 +464,7 @@ python benchmarks/adelic_sieve.py recurrences --dataset mfcs.tpls --per-order 10
 
 | Path | Contents |
 |---|---|
-| `galrax/padic/` | `flow.py` (table-driven flows, flow-box coordinates), `arithmetic.py` (residues, limbs, Horner), `normal_form.py` (Smith forms, certificates), `integrable.py` (Eliasson–Vey), `formal.py` (formal groups, elliptic curves, height bounds), `interpolation.py` (time-one maps, minimal actions), `return_set.py` (orbits and return sets), `equilibria.py`, `events.py`, `koopman.py`, `maps.py`, `series.py`, `plot.py`. |
+| `galrax/padic/` | `flow.py` (table-driven flows, flow-box coordinates), `arithmetic.py` (residues, limbs, Horner), `normal_form.py` (Smith forms, certificates), `integrable.py` (Eliasson–Vey), `formal.py` (formal groups, elliptic curves, height bounds), `interpolation.py` (time-one maps, minimal actions, orbit closures), `return_set.py` (orbits and return sets), `equilibria.py`, `events.py`, `koopman.py`, `maps.py`, `series.py`, `plot.py`. |
 | `galrax/ultrametric/` | $\mathbb{Z}_p$ to $n$ digits, ultrametric operators, Kozyrev wavelets. |
 | `galrax/groups/` | Finite groups, representations, Fourier transforms, `GroupODE`, `Lawson`. |
 | `test/` | One file per module: `test_padic_*.py`, `test_ultrametric.py`, `test_group_algebra.py`, and the tests of the examples. |
