@@ -5,13 +5,9 @@ title: "galrax: exact solvers for differential equations over the p-adic numbers
 authors:
   - family-names: Terskii
     given-names: Kirill
-version: 0.2.0
-doi: 10.5281/zenodo.24377208
-date-released: 2026-11-17
-identifiers:
-  - type: doi
-    value: 10.5281/zenodo.24323008
-    description: All versions
+version: 0.2.1
+doi: 10.5281/zenodo.24323008
+date-released: 2026-11-23
 license: Apache-2.0
 repository-code: "https://github.com/NotTruecCoder/galrax"
 keywords:

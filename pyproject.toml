@@ -43,7 +43,7 @@ optional-dependencies = {abs = ["python-flint"], plot = ["matplotlib"]}
 readme = "README.md"
 requires-python = ">=3.11"
 urls = {issues = "https://github.com/NotTruecCoder/galrax/issues", repository = "https://github.com/NotTruecCoder/galrax"}
-version = "0.2.0"
+version = "0.2.1"
 
 [project.scripts]
 galrax-abs = "galrax.padic.cli:main"
