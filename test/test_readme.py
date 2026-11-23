@@ -8,11 +8,7 @@ import pytest
 
 
 README = pathlib.Path(__file__).resolve().parent.parent / "README.md"
-BLOCKS = [
-    block
-    for block in re.findall(r"```python\n(.*?)```", README.read_text("utf-8"), re.S)
-    if "R.<" not in block  # Sage syntax
-]
+BLOCKS = re.findall(r"```python\n(.*?)```", README.read_text("utf-8"), re.S)
 
 
 @pytest.mark.slow

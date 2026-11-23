@@ -13,6 +13,8 @@ Galrax is a JAX library with three parts. It started as a fork of [Diffrax](http
 - **`galrax.ultrametric`**: diffusion on the $p$-adic integers $\mathbb{Z}_p$, solved with no discretisation error.
 - **`galrax.padic`**: differential equations whose *state* is $p$-adic, $dx/dt = f(x)$ with $x \in \mathbb{Z}_p^d$. These can be solved exactly, for every starting point and every time at once, and that is the main subject of this repository.
 
+The mathematics of these flows and their orbits is in the paper [*Orbits of p-adic flows*](https://arxiv.org/abs/2611.24982) (arXiv:2611.24982).
+
 ## Why p-adic flows can be solved exactly
 
 Over the real numbers, solving $dx/dt = f(x)$ means approximating: every step makes an error, and the error grows. Over the $p$-adic integers the picture is different. If the coefficients of $f$ are divisible by $p$ (by $4$ when $p = 2$), the Lie series
@@ -28,12 +30,11 @@ What it can do:
 - **Evaluate the flow exactly on the GPU.** Time is split into a tabulated part and a $p$-adically small part, as in table-driven `exp`, and space is re-expanded around the centres of small balls. For 19 digits of $\mathbb{Z}_3$ the degree drops from 33 to 2, and a laptop GPU computes $2 \times 10^8$ to $6 \times 10^8$ exact values per second, depending on its clock. Any number of digits works, through two-word and multi-limb arithmetic.
 - **Describe the orbits.** In one dimension the orbit of $x$ is exactly the ball of radius $|f(x)|_p$ around it, traversed at constant speed. In any dimension there are flow-box coordinates, computed by Newton's method, which give hitting times, return times and orbit averages by formula.
 - **Find events, equilibria and linearisations.** Event sets are finite unions of balls in time, found by refinement; equilibria are certified by Hensel's lemma.
-- **Interpolate iterates and certify minimal actions.** A map congruent to the identity modulo $p$ is the time-one map of exactly one field, computed from the iterates; several such maps whose displacements at a point form a basis of $p^k\mathbb{Z}_p^d$ generate a group acting minimally on that ball, with an explicit isometric chart. When they do not span, iterated commutators fill the missing directions, as in Chow–Rashevsky: `OrbitClosure` names a ball, or an analytic disc of lower rank, in the orbit closure. `examples/orbit_closure.py` runs it on Markoff surfaces and on the Wehler surfaces $(1 + x^2)(1 + y^2)(1 + z^2) + axyz = 2$ with their three involutions, where commutators lower the level at some points and conjugates by the involutions at others.
+- **Interpolate iterates and certify minimal actions.** A map congruent to the identity modulo $p$ is the time-one map of exactly one field, computed from the iterates; several such maps whose displacements at a point form a basis of $p^k\mathbb{Z}_p^d$ generate a group acting minimally on that ball, with an explicit isometric chart. When they do not span, iterated commutators fill the missing directions, as in Chow–Rashevsky: `OrbitClosure` names a ball, or an analytic disc of lower rank, in the orbit closure.
 - **Compute certified normal forms.** Near an equilibrium, the Poincaré–Dulac normal form is built through the Smith form of the homological operator over $\mathbb{Z}_p$. Complex eigenvalues, Jordan blocks, resonances and zero eigenvalues all go through the same algorithm. Each result comes with a certificate, rechecked in exact arithmetic, that the flow through the normal form is exact modulo $p^K$.
 - **Compute $p$-adic elliptic logarithms.** The formal logarithm of $\mathbb{G}_m$ or of an elliptic curve is the flow-box coordinate of an explicit field, so the flow machinery computes it exactly, together with multiples $[t]P$ for $p$-adic $t$.
 - **Analyse discrete maps.** Cycle trees and minimal decompositions of polynomial and 1-Lipschitz maps of $\mathbb{Z}_p$.
-- **Solve return sets of polynomial maps of $\mathbb{Z}_p^d$.** `Orbit` turns a power of the map into a flow near its cycle, so the times $n$ with $h(x_n) \equiv 0$ are a finite union of residue classes with Strassmann's bound on the exact zeros; linear recurrences go through their companion matrix (`recurrence_times`).
-- **Jump ahead in batches.** `PAdicMap.iterate` evaluates $g^n(x)$ for an array of $n$ at a cost independent of $n$, for maps of $\mathbb{Z}_p^d$; `period` gives the least period and `matrix_power_index` the first $n$ with $(M^n v)_i = y$ (Chebyshev, Lucas, Dickson).
+- **Solve return sets and jump ahead.** `Orbit` turns a power of a polynomial map of $\mathbb{Z}_p^d$ into a flow near its cycle, so the times $n$ with $h(x_n) \equiv 0$ are a finite union of residue classes with Strassmann's bound on the exact zeros, and `PAdicMap.iterate` evaluates $g^n(x)$ for an array of $n$ at a cost independent of $n$. Orbits with attracting directions are read exactly modulo $p^K$. Linear recurrences go through their companion matrix (`recurrence_times`), and `matrix_power_index` gives the first $n$ with $(M^n v)_i = y$ (Chebyshev, Lucas, Dickson).
 - **Compute formal groups of any dimension and Chabauty zeros.** `FormalGroup` builds the logarithm from commuting flows of the invariant differentials; `tiny_integrals` and `chabauty_zeros` find the zeros of $\int\omega$ in a residue disc of $y^2 = f(x)$.
 - **Scan for minimal actions on surfaces.** `examples/lattice_scan.py` certifies minimal actions of the Vieta involutions on the four-holed sphere family $x^2 + y^2 + z^2 + xyz = ax + by + cz + d$.
 - **Train invertible $p$-adic layers.** `examples/padic_layer.py`: the time-one map of a polynomial field is an exactly invertible layer, fitted digit by digit through linear systems modulo $p$, without gradients.
@@ -137,6 +138,8 @@ print(pf.smith_exponent_bound([[3, 3], [0, 3]], n=4, p=3))  # (10, 26): rank, ex
 print(pf.linear_degree([10, Fraction(28, 19)], p=3, threshold=12))  # 3: eigenvalues log_3
 ```
 
+`examples/orbit_closure.py` runs `OrbitClosure` on Markoff surfaces and on the Wehler surfaces $(1 + x^2)(1 + y^2)(1 + z^2) + axyz = 2$ with their three involutions, where commutators lower the level at some points and conjugates by the involutions at others.
+
 ### Elliptic logarithms as flows
 
 For a formal group with invariant differential $\omega(z)\,dz$, the field $f(u) = p/\omega(pu)$ moves points by translation in the group: $\log(p\,\varphi_s(u)) = \log(pu) + p^2 s$. Its rectifying coordinate is the formal logarithm, so Newton's method for flow-box coordinates computes $p$-adic elliptic logarithms exactly. The same idea gives the small divisors of a linear part $\mathrm{diag}(\log P_1, \dots, \log P_d)$: they are logarithms of the points $\sum_j m_j P_j - P_i$, and their valuations come straight from rational arithmetic on the curve.
@@ -218,7 +221,7 @@ pf.loop_exit([{(1, 0): 1, (0, 0): 1}, {(0, 1): 2}], (0, 1), {(0, 1): 1, (0, 0): 
 
 From Sage (`sage -pip install galrax[abs]`), the same functions take Sage polynomials, vectors, `DynamicalSystem_affine`, `BinaryRecurrenceSequence` and characteristic polynomials:
 
-```python
+```sage
 import jax; jax.config.update("jax_enable_x64", True)
 from galrax.padic import charpoly_to_r, map_zeros, recurrence_zeros
 
@@ -474,7 +477,17 @@ python benchmarks/adelic_sieve.py recurrences --dataset mfcs.tpls --per-order 10
 
 [![DOI](https://zenodo.org/badge/1444132823.svg)](https://doi.org/10.5281/zenodo.24323008)
 
-If you use galrax, please cite it through [`CITATION.cff`](https://github.com/NotTruecCoder/galrax/blob/main/CITATION.cff) or its DOI, [10.5281/zenodo.24323008](https://doi.org/10.5281/zenodo.24323008) for every version and [10.5281/zenodo.24377208](https://doi.org/10.5281/zenodo.24377208) for 0.2.0.
+If you use galrax, please cite it through [`CITATION.cff`](https://github.com/NotTruecCoder/galrax/blob/main/CITATION.cff) or its DOI, [10.5281/zenodo.24323008](https://doi.org/10.5281/zenodo.24323008), which always resolves to the latest version. For the mathematics of $p$-adic flows, cite the paper:
+
+```bibtex
+@misc{terskii2026orbits,
+    title={Orbits of $p$-adic flows},
+    author={Kirill Terskii},
+    year={2026},
+    eprint={2611.24982},
+    archivePrefix={arXiv},
+}
+```
 
 ## Credits and license
 
