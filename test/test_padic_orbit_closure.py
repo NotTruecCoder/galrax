@@ -84,7 +84,7 @@ def test_invariant_line_gives_an_arc():
     closure = OrbitClosure(3, 6, LINE, (0, 0))
     assert closure.rank == 1 and closure.levels == (1,) and closure.ball is None
     for t in range(1, 30):
-        x, y = closure.chart([t])
+        x, y = closure.chart(t)
         assert y == 0 and valuation(x, 3, 6) == 1 + valuation(t, 3, 6)
 
 
@@ -111,5 +111,6 @@ def test_chart_takes_arrays_of_times():
         assert list(images[index]) == list(closure.chart(times[index]))
     arc = OrbitClosure(3, 6, LINE, (0, 0))
     assert arc.chart([1, 2, 3]).shape == (3, 2) and list(arc.chart(2)) == [6, 0]
+    assert arc.chart([2]).shape == (1, 2)
     with pytest.raises(ValueError):
         closure.chart([1, 2, 3])

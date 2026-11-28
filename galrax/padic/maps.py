@@ -128,7 +128,7 @@ class PAdicMap:
             )
         if self._function is not None:
             return int(self._function(int(x) % modulus)) % modulus
-        total = 0
+        x, total = int(x), 0  # a NumPy integer would turn the sum into a float
         for c in reversed(self.coefficients):
             unit = c.numerator * pow(c.denominator, -1, modulus)
             total = (total * x + unit) % modulus
@@ -139,7 +139,7 @@ class PAdicMap:
         if not self.is_polynomial:
             raise ValueError("Only polynomial maps have a derivative.")
         modulus = self.p**level
-        total = 0
+        x, total = int(x), 0
         for k in reversed(range(1, len(self.coefficients))):
             c = self.coefficients[k] * k
             unit = c.numerator * pow(c.denominator, -1, modulus)
@@ -411,6 +411,8 @@ class PAdicMap:
             for i, v in enumerate(y)
         ]
         times = self.hitting_times(y, PAdicEvent(conditions), level)
+        if not times.balls:
+            raise ValueError(f"`x` is not periodic modulo {self.p}^{level}.")
         # The times form P Z: classes k P modulo M p^level, all of one level.
         return min(b.center[0] or times.period * self.p**b.level for b in times.balls)
 

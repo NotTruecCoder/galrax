@@ -543,7 +543,7 @@ class OrbitClosure:
         one) and the points shape `(..., d)`.
         """
         t = np.asarray(t, dtype=object)
-        if self.rank == 1 and (t.ndim == 0 or t.shape[-1] != 1):
+        if self.rank == 1:
             t = t[..., None]
         if t.ndim == 0 or t.shape[-1] != self.rank:
             raise ValueError(f"`t` must have {self.rank} coordinates.")

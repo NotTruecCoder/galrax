@@ -127,3 +127,11 @@ def test_unreachable_over_the_integers():
         assert (n in mod_p) == ((x - 100) % 11 == 0)
         assert x != 100
         x = 1 - 3 * x
+
+
+def test_numpy_points_and_non_periodic_period():
+    T = PAdicMap(3, [1, 1, 3])
+    x = 3**30 + 7
+    assert T(np.int64(x), 40) == T(x, 40) and isinstance(T(np.int64(x), 40), int)
+    with pytest.raises(ValueError, match="not periodic"):
+        PAdicMap(3, [0, 0, 1]).period(2, 3)
